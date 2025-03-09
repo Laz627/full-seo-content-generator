@@ -9,12 +9,14 @@ from bs4 import BeautifulSoup
 import trafilatura
 import openai
 from docx import Document
-from docx.shared import Pt, Inches
+from docx.shared import Pt, Inches, RGBColor
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from io import BytesIO
 import base64
 import random
 from typing import List, Dict, Any, Tuple, Optional
 import logging
+import traceback
 
 # Configure logging
 logging.basicConfig(
@@ -180,6 +182,7 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
     except Exception as e:
         error_msg = f"Exception in fetch_serp_results: {str(e)}"
         logger.error(error_msg)
+        logger.error(traceback.format_exc())
         return [], [], False
 
 ###############################################################################
@@ -203,22 +206,29 @@ def create_default_keywords(keyword: str) -> List[Dict]:
 
 def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch related keywords from DataForSEO Related Keywords API for more diverse suggestions
+    Fetch related keywords from DataForSEO Keyword Suggestions API
+    Updated to match the API response structure in the sample
     Returns: related_keywords, success_status
     """
     try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
+        # Use the keyword_suggestions endpoint as shown in the sample
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live"
         headers = {
             'Content-Type': 'application/json',
         }
         
-        # Prepare request data
+        # Prepare request data following the sample format
         post_data = [{
             "keyword": keyword,
             "location_code": 2840,  # USA
             "language_code": "en",
+            "include_serp_info": True,
+            "include_seed_keyword": True,
             "limit": 20  # Fetch top 20 related keywords
         }]
+        
+        # Log the request for debugging
+        logger.info(f"Fetching related keywords for: {keyword}")
         
         # Make API request
         response = requests.post(
@@ -232,25 +242,57 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
         if response.status_code == 200:
             data = response.json()
             
-            if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
-                if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
-                    results = data['tasks'][0]['result'][0]
-                    
-                    related_keywords = []
-                    for item in results.get('items', [])[:20]:  # Limit to top 20
-                        # Extract metrics from the correct locations
-                        related_keywords.append({
-                            'keyword': item.get('keyword', ''),
-                            'search_volume': item.get('search_volume', 0),
-                            'cpc': item.get('cpc', 0.0),
-                            'competition': item.get('competition_index', 0.0)
-                        })
-                    
-                    if related_keywords:
-                        return related_keywords, True
+            # Log complete response for debugging
+            logger.info(f"API Response: {json.dumps(data, indent=2)}")
             
-            # If primary approach fails, try with keyword_ideas endpoint
-            logger.warning(f"No related keywords found, trying keyword_ideas endpoint")
+            # Basic validation of response
+            if data.get('status_code') != 20000:
+                error_msg = f"API Error: {data.get('status_code')} - {data.get('status_message')}"
+                logger.error(error_msg)
+                return create_default_keywords(keyword), False
+            
+            # Check if we have tasks and results
+            if not data.get('tasks') or len(data['tasks']) == 0 or not data['tasks'][0].get('result'):
+                logger.warning(f"No tasks or results in API response")
+                return create_default_keywords(keyword), False
+            
+            # Process according to the JSON structure in the sample
+            result = data['tasks'][0]['result']
+            related_keywords = []
+            
+            # First, try to extract the seed keyword data
+            if len(result) > 0 and 'seed_keyword_data' in result[0]:
+                seed_data = result[0]['seed_keyword_data']
+                if 'keyword_info' in seed_data:
+                    keyword_info = seed_data['keyword_info']
+                    related_keywords.append({
+                        'keyword': result[0].get('seed_keyword', ''),
+                        'search_volume': keyword_info.get('search_volume', 0),
+                        'cpc': keyword_info.get('cpc', 0.0),
+                        'competition': keyword_info.get('competition', 0.0)
+                    })
+            
+            # Then look for related keyword items
+            for res_item in result:
+                if isinstance(res_item, dict) and 'items' in res_item:
+                    items = res_item.get('items', [])
+                    for item in items:
+                        if 'keyword_info' in item:
+                            keyword_info = item['keyword_info']
+                            related_keywords.append({
+                                'keyword': item.get('keyword', ''),
+                                'search_volume': keyword_info.get('search_volume', 0),
+                                'cpc': keyword_info.get('cpc', 0.0),
+                                'competition': keyword_info.get('competition', 0.0)
+                            })
+            
+            # If we found any keywords, return them
+            if related_keywords:
+                logger.info(f"Successfully extracted {len(related_keywords)} related keywords")
+                return related_keywords, True
+                
+            # If no keywords found, try backup method
+            logger.warning(f"No keywords extracted from primary response, trying backup method")
             return fetch_keyword_ideas_backup(keyword, api_login, api_password)
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
@@ -260,6 +302,7 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
     except Exception as e:
         error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
         logger.error(error_msg)
+        logger.error(traceback.format_exc())
         return create_default_keywords(keyword), False
 
 def fetch_keyword_ideas_backup(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
@@ -282,6 +325,9 @@ def fetch_keyword_ideas_backup(keyword: str, api_login: str, api_password: str) 
             "limit": 20  # Fetch top 20 keyword ideas
         }]
         
+        # Log the request
+        logger.info(f"Fetching keyword ideas (backup) for: {keyword}")
+        
         # Make API request
         response = requests.post(
             url,
@@ -290,38 +336,59 @@ def fetch_keyword_ideas_backup(keyword: str, api_login: str, api_password: str) 
             json=post_data
         )
         
-        # Process response
+        # Log full response for debugging
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"Backup API Response: {json.dumps(data, indent=2)}")
             
             if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
                 if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
-                    results = data['tasks'][0]['result'][0]
-                    
+                    results = data['tasks'][0]['result']
                     keyword_ideas = []
-                    for item in results.get('items', [])[:20]:  # Limit to top 20
-                        # Extract keyword and metrics
-                        keyword_ideas.append({
-                            'keyword': item.get('keyword', ''),
-                            'search_volume': item.get('search_volume', 0),
-                            'cpc': item.get('cpc', 0.0),
-                            'competition': item.get('competition', 0.0)
-                        })
+                    
+                    # Process both potential structures
+                    # 1. Look for seed keyword data
+                    for result in results:
+                        if 'seed_keyword_data' in result:
+                            seed_data = result['seed_keyword_data']
+                            if 'keyword_info' in seed_data:
+                                keyword_info = seed_data['keyword_info']
+                                keyword_ideas.append({
+                                    'keyword': result.get('seed_keyword', ''),
+                                    'search_volume': keyword_info.get('search_volume', 0),
+                                    'cpc': keyword_info.get('cpc', 0.0),
+                                    'competition': keyword_info.get('competition', 0.0)
+                                })
+                    
+                    # 2. Look for items arrays
+                    for result in results:
+                        if 'items' in result:
+                            for item in result['items']:
+                                if 'keyword_info' in item:
+                                    keyword_info = item['keyword_info']
+                                    keyword_ideas.append({
+                                        'keyword': item.get('keyword', ''),
+                                        'search_volume': keyword_info.get('search_volume', 0),
+                                        'cpc': keyword_info.get('cpc', 0.0),
+                                        'competition': keyword_info.get('competition', 0.0)
+                                    })
                     
                     if keyword_ideas:
+                        logger.info(f"Successfully extracted {len(keyword_ideas)} keyword ideas from backup method")
                         return keyword_ideas, True
             
             # Fallback to default keywords
-            logger.warning(f"No keyword ideas found for '{keyword}' using DataForSEO API")
+            logger.warning(f"No keyword ideas found in backup method")
             return create_default_keywords(keyword), False
         else:
-            error_msg = f"HTTP Error: {response.status_code} - {response.text}"
+            error_msg = f"HTTP Error in backup method: {response.status_code} - {response.text}"
             logger.error(error_msg)
             return create_default_keywords(keyword), False
     
     except Exception as e:
         error_msg = f"Exception in fetch_keyword_ideas_backup: {str(e)}"
         logger.error(error_msg)
+        logger.error(traceback.format_exc())
         return create_default_keywords(keyword), False
 
 ###############################################################################
@@ -356,7 +423,7 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
             'Referer': 'https://www.google.com/'
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -416,7 +483,7 @@ def extract_headings(url: str) -> Dict[str, List[str]]:
             'Referer': 'https://www.google.com/'
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -437,7 +504,82 @@ def extract_headings(url: str) -> Dict[str, List[str]]:
         return {'h1': [], 'h2': [], 'h3': []}
 
 ###############################################################################
-# 5. Embeddings and Semantic Analysis
+# 5. Meta Title and Description Generation
+###############################################################################
+
+def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
+                      openai_api_key: str) -> Tuple[str, str, bool]:
+    """
+    Generate meta title and description for the content
+    Returns: meta_title, meta_description, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Extract H1 and first few sections for context
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        
+        # Get top 5 related keywords
+        top_keywords = ", ".join([kw.get('keyword', '') for kw in related_keywords[:5] if kw.get('keyword')])
+        
+        # Generate meta tags
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an SEO specialist who creates optimized meta tags."},
+                {"role": "user", "content": f"""
+                Create an SEO-optimized meta title and description for an article about "{keyword}".
+                
+                The article's main heading is: "{h1}"
+                
+                Related keywords to consider: {top_keywords}
+                
+                Guidelines:
+                1. Meta title: 50-60 characters, include primary keyword near the beginning
+                2. Meta description: 150-160 characters, include primary and secondary keywords
+                3. Be compelling, accurate, and include a call to action in the description
+                4. Avoid clickbait, use natural language
+                
+                Format your response as JSON:
+                {{
+                    "meta_title": "Your optimized meta title here",
+                    "meta_description": "Your optimized meta description here"
+                }}
+                """}
+            ],
+            temperature=0.7
+        )
+        
+        # Extract and parse JSON response
+        content = response.choices[0].message.content
+        # Find JSON content within response (in case there's additional text)
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        meta_data = json.loads(content)
+        
+        # Extract meta tags
+        meta_title = meta_data.get('meta_title', f"{h1} | Your Ultimate Guide")
+        meta_description = meta_data.get('meta_description', f"Learn everything about {keyword} in our comprehensive guide. Discover tips, best practices, and expert advice to master {keyword} today.")
+        
+        # Truncate if too long
+        if len(meta_title) > 60:
+            meta_title = meta_title[:57] + "..."
+        
+        if len(meta_description) > 160:
+            meta_description = meta_description[:157] + "..."
+        
+        return meta_title, meta_description, True
+    
+    except Exception as e:
+        error_msg = f"Exception in generate_meta_tags: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return f"{keyword} - Complete Guide", f"Learn everything about {keyword} in our comprehensive guide. Discover expert tips and best practices.", False
+
+###############################################################################
+# 6. Embeddings and Semantic Analysis
 ###############################################################################
 
 def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedding-3-small") -> Tuple[List[float], bool]:
@@ -530,7 +672,7 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
         return {}, False
 
 ###############################################################################
-# 6. Content Generation
+# 7. Content Generation
 ###############################################################################
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
@@ -627,7 +769,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         return "", False
 
 ###############################################################################
-# 7. Internal Linking
+# 8. Internal Linking
 ###############################################################################
 
 def parse_site_pages_spreadsheet(uploaded_file) -> Tuple[List[Dict], bool]:
@@ -732,7 +874,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
                              for p in pages_with_embeddings[:30]])  # Limit to prevent token overflow
         
-        # Generate internal links using semantic matching instead of paragraphs
+        # Generate internal links with emphasis on using each URL only once
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -746,7 +888,8 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 4. Only link to relevant pages from the list provided
                 5. Format links as HTML <a href="URL">anchor text</a>
                 6. Do not modify the article content except to add links
-                7. Return the article with added links
+                7. IMPORTANT: USE EACH URL ONLY ONCE - never use the same URL for multiple links
+                8. Return the article with added links
                 
                 Pages available for linking:
                 {pages_str}
@@ -796,6 +939,21 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 except:
                     links_added = []
         
+        # Ensure no duplicate URLs (enforce uniqueness)
+        if links_added:
+            used_urls = set()
+            unique_links = []
+            
+            for link in links_added:
+                url = link.get('url', '')
+                if url and url not in used_urls:
+                    used_urls.add(url)
+                    unique_links.append(link)
+                else:
+                    logger.warning(f"Removing duplicate URL: {url}")
+            
+            links_added = unique_links
+        
         return article_with_links, links_added, True
     
     except Exception as e:
@@ -804,22 +962,34 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         return article_content, [], False
 
 ###############################################################################
-# 8. Document Generation
+# 9. Document Generation
 ###############################################################################
 
 def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
-                        semantic_structure: Dict, article_content: str, 
-                        internal_links: List[Dict] = None) -> Tuple[BytesIO, bool]:
+                        semantic_structure: Dict, article_content: str, meta_title: str, 
+                        meta_description: str, internal_links: List[Dict] = None) -> Tuple[BytesIO, bool]:
     """
     Create Word document with all components
     Returns: document_stream, success_status
     """
     try:
         doc = Document()
+        
+        # Add document title
         doc.add_heading(f'SEO Brief: {keyword}', 0)
         
         # Add date
         doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Add meta title and description
+        doc.add_heading('Meta Tags', level=1)
+        meta_paragraph = doc.add_paragraph()
+        meta_paragraph.add_run("Meta Title: ").bold = True
+        meta_paragraph.add_run(meta_title)
+        
+        desc_paragraph = doc.add_paragraph()
+        desc_paragraph.add_run("Meta Description: ").bold = True
+        desc_paragraph.add_run(meta_description)
         
         # Section 1: SERP Analysis
         doc.add_heading('SERP Analysis', level=1)
@@ -874,27 +1044,71 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
         
         # Section 4: Generated Article
-        doc.add_heading('Generated Article', level=1)
+        doc.add_heading('Generated Article with Internal Links', level=1)
         
-        # Parse HTML content and add to document
+        # Parse HTML content and add to document, preserving links
         soup = BeautifulSoup(article_content, 'html.parser')
         
         for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
-            if element.name == 'h1':
-                doc.add_heading(element.get_text(), level=1)
-            elif element.name == 'h2':
-                doc.add_heading(element.get_text(), level=2)
-            elif element.name == 'h3':
-                doc.add_heading(element.get_text(), level=3)
+            if element.name in ['h1', 'h2', 'h3']:
+                level = int(element.name[1])
+                doc.add_heading(element.get_text(), level=level)
             elif element.name == 'p':
-                doc.add_paragraph(element.get_text())
-            elif element.name in ['ul', 'ol']:
+                p = doc.add_paragraph()
+                
+                # Process paragraph content including links
+                for content in element.contents:
+                    if isinstance(content, str):
+                        # Plain text
+                        p.add_run(content)
+                    elif content.name == 'a':
+                        # Add link as hyperlinked text
+                        url = content.get('href', '')
+                        text = content.get_text()
+                        if url and text:
+                            run = p.add_run(text)
+                            run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
+                            run.underline = True
+                            # Note: This creates the visual appearance but not functional hyperlinks
+                    else:
+                        # Other tags
+                        p.add_run(content.get_text())
+                        
+            elif element.name == 'ul':
                 for li in element.find_all('li'):
-                    doc.add_paragraph(li.get_text(), style='List Bullet' if element.name == 'ul' else 'List Number')
+                    p = doc.add_paragraph(style='List Bullet')
+                    for content in li.contents:
+                        if isinstance(content, str):
+                            p.add_run(content)
+                        elif content.name == 'a':
+                            url = content.get('href', '')
+                            text = content.get_text()
+                            if url and text:
+                                run = p.add_run(text)
+                                run.font.color.rgb = RGBColor(0, 0, 255)
+                                run.underline = True
+                        else:
+                            p.add_run(content.get_text())
+                            
+            elif element.name == 'ol':
+                for i, li in enumerate(element.find_all('li')):
+                    p = doc.add_paragraph(style='List Number')
+                    for content in li.contents:
+                        if isinstance(content, str):
+                            p.add_run(content)
+                        elif content.name == 'a':
+                            url = content.get('href', '')
+                            text = content.get_text()
+                            if url and text:
+                                run = p.add_run(text)
+                                run.font.color.rgb = RGBColor(0, 0, 255)
+                                run.underline = True
+                        else:
+                            p.add_run(content.get_text())
         
         # Section 5: Internal Linking (if provided)
         if internal_links:
-            doc.add_heading('Internal Linking Recommendations', level=1)
+            doc.add_heading('Internal Linking Summary', level=1)
             
             link_table = doc.add_table(rows=1, cols=3)
             link_table.style = 'Table Grid'
@@ -922,10 +1136,11 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
     except Exception as e:
         error_msg = f"Exception in create_word_document: {str(e)}"
         logger.error(error_msg)
+        logger.error(traceback.format_exc())
         return BytesIO(), False
 
 ###############################################################################
-# 9. Main Streamlit App
+# 10. Main Streamlit App
 ###############################################################################
 
 def main():
@@ -1100,13 +1315,14 @@ def main():
         if 'semantic_structure' not in st.session_state.results:
             st.warning("Please complete content analysis first (in the 'Content Analysis' tab)")
         else:
-            if st.button("Generate Article"):
+            if st.button("Generate Article and Meta Tags"):
                 if not openai_api_key:
                     st.error("Please enter OpenAI API key")
                 else:
-                    with st.spinner("Generating article..."):
+                    with st.spinner("Generating article and meta tags..."):
                         start_time = time.time()
                         
+                        # Generate article
                         article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
@@ -1118,15 +1334,36 @@ def main():
                         if article_success and article_content:
                             st.session_state.results['article_content'] = article_content
                             
+                            # Generate meta title and description
+                            meta_title, meta_description, meta_success = generate_meta_tags(
+                                st.session_state.results['keyword'],
+                                st.session_state.results['semantic_structure'],
+                                st.session_state.results.get('related_keywords', []),
+                                openai_api_key
+                            )
+                            
+                            if meta_success:
+                                st.session_state.results['meta_title'] = meta_title
+                                st.session_state.results['meta_description'] = meta_description
+                                
+                                st.subheader("Meta Tags")
+                                st.write(f"**Meta Title:** {meta_title}")
+                                st.write(f"**Meta Description:** {meta_description}")
+                            
                             st.subheader("Generated Article")
                             st.markdown(article_content, unsafe_allow_html=True)
                             
-                            st.success(f"Article generation completed in {format_time(time.time() - start_time)}")
+                            st.success(f"Content generation completed in {format_time(time.time() - start_time)}")
                         else:
                             st.error("Failed to generate article. Please try again.")
             
             # Show previously generated article if available
             if 'article_content' in st.session_state.results:
+                if 'meta_title' in st.session_state.results:
+                    st.subheader("Previously Generated Meta Tags")
+                    st.write(f"**Meta Title:** {st.session_state.results['meta_title']}")
+                    st.write(f"**Meta Description:** {st.session_state.results['meta_description']}")
+                
                 st.subheader("Previously Generated Article")
                 st.markdown(st.session_state.results['article_content'], unsafe_allow_html=True)
     
@@ -1246,6 +1483,13 @@ def main():
                     
                     internal_links = st.session_state.results.get('internal_links', None)
                     
+                    # Get meta title and description
+                    meta_title = st.session_state.results.get('meta_title', 
+                                                             f"{st.session_state.results['keyword']} - Complete Guide")
+                    
+                    meta_description = st.session_state.results.get('meta_description', 
+                                                                  f"Learn everything about {st.session_state.results['keyword']} in our comprehensive guide.")
+                    
                     # Create Word document
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
@@ -1253,6 +1497,8 @@ def main():
                         st.session_state.results.get('related_keywords', []),
                         st.session_state.results['semantic_structure'],
                         article_content,
+                        meta_title,
+                        meta_description,
                         internal_links
                     )
                     
@@ -1281,6 +1527,7 @@ def main():
                 ("Related Keywords", 'related_keywords' in st.session_state.results),
                 ("Content Analysis", 'scraped_contents' in st.session_state.results),
                 ("Semantic Structure", 'semantic_structure' in st.session_state.results),
+                ("Meta Title & Description", 'meta_title' in st.session_state.results),
                 ("Generated Article", 'article_content' in st.session_state.results),
                 ("Internal Linking", 'article_with_links' in st.session_state.results)
             ]
