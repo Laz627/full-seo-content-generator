@@ -721,7 +721,7 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
-    Generate article using GPT-4o-mini with improved error handling
+    Generate comprehensive article with detailed paragraphs and concise headings
     Returns: article_content, success_status
     """
     try:
@@ -781,13 +781,15 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Generate article
+        # Generate article with improved instructions for content depth and concise language
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert SEO content writer."},
+                {"role": "system", "content": """You are an expert content writer with deep subject matter expertise.
+                Write in a straightforward, authoritative style without fluff or filler phrases.
+                Focus on providing detailed, specific information with concrete examples and evidence."""},
                 {"role": "user", "content": f"""
-                Write a comprehensive, SEO-optimized article about "{keyword}".
+                Write a comprehensive, expert-level article about "{keyword}".
                 
                 Use this semantic structure:
                 H1: {h1}
@@ -795,21 +797,29 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Sections:
                 {sections_str}
                 
-                Include these related keywords naturally throughout the text: {related_kw_str}
-                
-                The top SERP features for this keyword are: {serp_features_str}. Optimize for these features.
-                
-                Include answers to these 'People Also Asked' questions from Google:
+                Content requirements:
+                1. Write thorough, information-rich paragraphs (minimum 150 words per section)
+                2. Include specific examples, data points, and practical details in each section
+                3. Use direct, precise language - avoid filler phrases like "it's important to note" or "needless to say"
+                4. Keep headings concise and descriptive (max 8 words)
+                5. Maintain a professional tone throughout - no excessive enthusiasm or obvious marketing language
+                6. Include the related keywords naturally: {related_kw_str}
+                7. Answer these 'People Also Asked' questions within the article text:
                 {paa_str}
+                8. Optimize for these SERP features: {serp_features_str}
                 
-                Format the article with proper HTML heading tags (h1, h2, h3) and paragraph tags (p).
-                Use bullet points and numbered lists where appropriate.
+                Format the article with proper HTML:
+                - Main title in <h1> tags
+                - Section headings in <h2> tags
+                - Subsection headings in <h3> tags
+                - Paragraphs in <p> tags
+                - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                 
-                The article should be comprehensive, factually accurate, and engaging.
-                Aim for around 1,500-2,000 words total.
+                The article should be authoritative, factually accurate, and comprehensive.
+                Aim for around 1,800-2,200 words total with substantive, detailed content in each section.
                 """}
             ],
-            temperature=0.7
+            temperature=0.5
         )
         
         article_content = response.choices[0].message.content
@@ -985,17 +995,9 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             
             logger.info(f"Generated {len(suggestions)} link suggestions")
             
-            # Now apply these links to the article
-            article_with_links = article_content
-            for suggestion in suggestions:
-                url = suggestion.get("url", "")
-                anchor_text = suggestion.get("anchor_text", "")
-                
-                if url and anchor_text and anchor_text in article_with_links:
-                    # Replace the anchor text with linked version
-                    linked_text = f'<a href="{url}">{anchor_text}</a>'
-                    article_with_links = article_with_links.replace(anchor_text, linked_text, 1)
-                
+            # Apply links using the more precise function
+            article_with_links = apply_internal_links(article_content, suggestions)
+            
             # Format the final list of links
             links_added = []
             for suggestion in suggestions:
@@ -1021,7 +1023,62 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return article_content, [], False                                         
+        return article_content, [], False
+
+def apply_internal_links(article_content: str, link_suggestions: List[Dict]) -> str:
+    """
+    Apply internal links to article content with improved precision
+    """
+    # Sort suggestions by anchor text length (descending) to avoid substring issues
+    link_suggestions = sorted(link_suggestions, key=lambda x: len(x.get('anchor_text', '')), reverse=True)
+    
+    # Create HTML soup to preserve structure
+    soup = BeautifulSoup(article_content, 'html.parser')
+    
+    # Track paragraphs we've already processed to avoid duplicate replacements
+    processed_tags = set()
+    replaced_anchors = set()
+    
+    # Process each link suggestion
+    for suggestion in link_suggestions:
+        url = suggestion.get('url', '')
+        anchor_text = suggestion.get('anchor_text', '')
+        
+        if not url or not anchor_text or anchor_text in replaced_anchors:
+            continue
+            
+        # Find all text elements
+        for tag in soup.find_all(['p', 'li', 'h2', 'h3']):
+            # Skip if we've already processed this tag
+            tag_id = id(tag)
+            if tag_id in processed_tags:
+                continue
+                
+            # Skip headings that contain the exact anchor text (avoid changing heading content)
+            if tag.name in ['h1', 'h2', 'h3'] and tag.get_text().strip() == anchor_text:
+                continue
+                
+            # Check if anchor text is in this tag
+            tag_text = str(tag)
+            if anchor_text in tag_text and '<a ' not in tag_text:
+                # Replace text with linked version but preserve HTML
+                linked_html = tag_text.replace(
+                    anchor_text, 
+                    f'<a href="{url}">{anchor_text}</a>',
+                    1  # Only replace first occurrence
+                )
+                
+                # Replace the tag with updated HTML
+                new_tag = BeautifulSoup(linked_html, 'html.parser')
+                tag.replace_with(new_tag)
+                
+                # Mark this anchor as replaced and tag as processed
+                replaced_anchors.add(anchor_text)
+                processed_tags.add(tag_id)
+                break
+    
+    # Return the updated HTML
+    return str(soup)
 
 ###############################################################################
 # 9. Document Generation
