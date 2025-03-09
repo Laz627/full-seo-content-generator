@@ -12,6 +12,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 from io import BytesIO
 import base64
+import random
 from typing import List, Dict, Any, Tuple, Optional
 import logging
 
@@ -58,65 +59,41 @@ def format_time(seconds: float) -> str:
 # 2. API Integration - DataForSEO
 ###############################################################################
 
-def classify_page_type_openai(title: str, snippet: str, openai_api_key: str) -> str:
+def classify_page_type(url: str, title: str, snippet: str) -> str:
     """
-    Classify the page type using OpenAI
-    Returns: page_type (E-commerce, Article, Landing Page, Informational, etc.)
+    Simplified page type classification based on title and snippet patterns
+    Returns: page_type
     """
-    try:
-        openai.api_key = openai_api_key
-        
-        # Prepare prompt for OpenAI
-        prompt = f"""
-        Classify the following web page into one of these categories:
-        - E-commerce (selling products)
-        - Article (blog post, news article, or informational content)
-        - Landing Page (focused on conversion/lead generation)
-        - Informational (general information, guides, or reference)
-        - Tool/App (interactive tool or application)
-        - Forum/Community (discussion board or community site)
-
-        Title: {title}
-        Snippet: {snippet}
-
-        Return ONLY the category name, nothing else.
-        """
-        
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that classifies web pages based on titles and snippets."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            max_tokens=20
-        )
-        
-        page_type = response.choices[0].message.content.strip()
-        
-        # Normalize the response to match expected categories
-        page_type = page_type.split('\n')[0].strip()
-        
-        # Handle cases where response doesn't match one of our categories
-        valid_types = ["E-commerce", "Article", "Landing Page", "Informational", "Tool/App", "Forum/Community"]
-        if page_type not in valid_types:
-            # Find closest match
-            for valid_type in valid_types:
-                if valid_type.lower() in page_type.lower():
-                    page_type = valid_type
-                    break
-            else:
-                page_type = "Informational"  # Default if no match
-        
-        return page_type
+    title_lower = title.lower() if title else ""
+    snippet_lower = snippet.lower() if snippet else ""
+    url_lower = url.lower() if url else ""
     
-    except Exception as e:
-        logger.error(f"Error classifying page type with OpenAI: {str(e)}")
-        return "Informational"  # Default type if there's an error
+    # E-commerce indicators
+    commerce_patterns = ['buy', 'shop', 'purchase', 'cart', 'checkout', 'price', 'discount', 'sale', 'product', 'order']
+    if any(pattern in title_lower or pattern in snippet_lower or pattern in url_lower for pattern in commerce_patterns):
+        return "E-commerce"
+    
+    # Article/Blog indicators
+    article_patterns = ['blog', 'article', 'news', 'post', 'how to', 'guide', 'tips', 'tutorial', 'learn']
+    if any(pattern in title_lower or pattern in snippet_lower or pattern in url_lower for pattern in article_patterns):
+        return "Article/Blog"
+    
+    # Forum/Community indicators
+    forum_patterns = ['forum', 'community', 'discussion', 'thread', 'reply', 'comment', 'question', 'answer']
+    if any(pattern in title_lower or pattern in snippet_lower or pattern in url_lower for pattern in forum_patterns):
+        return "Forum/Community"
+    
+    # Review indicators
+    review_patterns = ['review', 'comparison', 'vs', 'versus', 'top 10', 'best', 'rating', 'rated']
+    if any(pattern in title_lower or pattern in snippet_lower or pattern in url_lower for pattern in review_patterns):
+        return "Review/Comparison"
+    
+    # Default to informational
+    return "Informational"
 
-def fetch_serp_results(keyword: str, api_login: str, api_password: str, openai_api_key: str) -> Tuple[List[Dict], List[Dict], bool]:
+def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], List[Dict], bool]:
     """
-    Fetch SERP results from DataForSEO API and classify pages using OpenAI
+    Fetch SERP results from DataForSEO API and classify pages
     Returns: organic_results, serp_features, success_status
     """
     try:
@@ -154,15 +131,16 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str, openai_a
                 for item in results.get('items', []):
                     if item.get('type') == 'organic':
                         if len(organic_results) < 10:  # Limit to top 10
-                            # Get title and snippet for OpenAI classification
+                            # Get title and snippet for classification
                             title = item.get('title', '')
                             snippet = item.get('snippet', '')
+                            url = item.get('url', '')
                             
-                            # Classify page type using OpenAI
-                            page_type = classify_page_type_openai(title, snippet, openai_api_key)
+                            # Classify page type using pattern matching
+                            page_type = classify_page_type(url, title, snippet)
                             
                             organic_results.append({
-                                'url': item.get('url'),
+                                'url': url,
                                 'title': title,
                                 'snippet': snippet,
                                 'rank_group': item.get('rank_group'),
@@ -208,13 +186,13 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str, openai_a
 # 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
-def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch related keywords from DataForSEO Related Keywords API
-    Returns: related_keywords, success_status
+    Fetch keyword ideas from DataForSEO Keyword Ideas API
+    Returns: keyword_ideas, success_status
     """
     try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live"
         headers = {
             'Content-Type': 'application/json',
         }
@@ -224,7 +202,8 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
             "keyword": keyword,
             "location_code": 2840,  # USA
             "language_code": "en",
-            "limit": 20  # Fetch top 20 related keywords
+            "include_seed_keyword": True,
+            "limit": 20  # Fetch top 20 keyword ideas
         }]
         
         # Make API request
@@ -238,31 +217,50 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
         # Process response
         if response.status_code == 200:
             data = response.json()
-            if data.get('status_code') == 20000:
-                results = data['tasks'][0]['result'][0]
-                
-                related_keywords = []
-                for item in results.get('items', [])[:20]:  # Limit to top 20
-                    related_keywords.append({
-                        'keyword': item.get('keyword'),
-                        'search_volume': item.get('search_volume', 0),
-                        'cpc': item.get('cpc', 0.0),
-                        'competition': item.get('competition_index', 0.0)
-                    })
-                return related_keywords, True
-            else:
-                error_msg = f"API Error: {data.get('status_message')}"
-                logger.error(error_msg)
-                return [], False
+            
+            if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
+                if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
+                    results = data['tasks'][0]['result'][0]
+                    
+                    keyword_ideas = []
+                    for item in results.get('items', [])[:20]:  # Limit to top 20
+                        keyword_ideas.append({
+                            'keyword': item.get('keyword', ''),
+                            'search_volume': item.get('search_volume', 0),
+                            'cpc': item.get('cpc', 0.0),
+                            'competition': item.get('competition', 0.0)
+                        })
+                    
+                    if keyword_ideas:
+                        return keyword_ideas, True
+            
+            # If we got here, no keywords were found or there was an issue
+            logger.warning(f"No keyword ideas found for '{keyword}' or API response format unexpected")
+            return create_default_keywords(keyword), False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
             logger.error(error_msg)
-            return [], False
+            return create_default_keywords(keyword), False
     
     except Exception as e:
-        error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
+        error_msg = f"Exception in fetch_keyword_ideas_dataforseo: {str(e)}"
         logger.error(error_msg)
-        return [], False
+        return create_default_keywords(keyword), False
+
+def create_default_keywords(keyword: str) -> List[Dict]:
+    """Create default related keywords when API fails"""
+    return [
+        {'keyword': f"{keyword} guide", 'search_volume': 100, 'cpc': 0.5, 'competition': 0.3},
+        {'keyword': f"best {keyword}", 'search_volume': 90, 'cpc': 0.6, 'competition': 0.4},
+        {'keyword': f"{keyword} tutorial", 'search_volume': 80, 'cpc': 0.4, 'competition': 0.3},
+        {'keyword': f"how to use {keyword}", 'search_volume': 70, 'cpc': 0.3, 'competition': 0.2},
+        {'keyword': f"{keyword} benefits", 'search_volume': 60, 'cpc': 0.5, 'competition': 0.3},
+        {'keyword': f"{keyword} examples", 'search_volume': 50, 'cpc': 0.4, 'competition': 0.2},
+        {'keyword': f"{keyword} tips", 'search_volume': 40, 'cpc': 0.3, 'competition': 0.2},
+        {'keyword': f"free {keyword}", 'search_volume': 100, 'cpc': 0.7, 'competition': 0.5},
+        {'keyword': f"{keyword} alternatives", 'search_volume': 80, 'cpc': 0.8, 'competition': 0.6},
+        {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
+    ]
 
 ###############################################################################
 # 4. Web Scraping and Content Analysis
@@ -270,54 +268,105 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
 
 def scrape_webpage(url: str) -> Tuple[str, bool]:
     """
-    Scrape webpage content using trafilatura (handles JavaScript better than plain requests)
+    Enhanced webpage scraping with better error handling and rotating user agents
     Returns: content, success_status
     """
     try:
-        # Use trafilatura to download and extract content
-        downloaded = trafilatura.fetch_url(url)
+        # List of common user agents to rotate
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
+        ]
+        
+        # Select a random user agent
+        user_agent = random.choice(user_agents)
+        
+        # Set headers
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Try with trafilatura first
+        downloaded = trafilatura.fetch_url(url, headers=headers)
         if downloaded:
             content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
             if content:
                 return content, True
+        
+        # Fallback to requests + BeautifulSoup
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        # Handle common status codes
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Remove script, style, and other non-content elements
+            for element in soup(["script", "style", "header", "footer", "nav", "aside", "form"]):
+                element.extract()
+            
+            # Try to find main content
+            main_content = soup.find('main') or soup.find('article') or soup.find('div', class_='content')
+            
+            if main_content:
+                text = main_content.get_text(separator='\n')
             else:
-                # Fallback to BeautifulSoup if trafilatura fails
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    # Remove script, style elements
-                    for script in soup(["script", "style", "header", "footer", "nav"]):
-                        script.extract()
-                    
-                    text = soup.get_text(separator='\n')
-                    lines = (line.strip() for line in text.splitlines())
-                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                    text = '\n'.join(chunk for chunk in chunks if chunk)
-                    
-                    return text, True
-                else:
-                    return "", False
+                text = soup.get_text(separator='\n')
+            
+            # Clean up text
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            
+            return text, True
+        
+        elif response.status_code == 403:
+            logger.warning(f"Access forbidden (403) for URL: {url}")
+            return f"[Content not accessible due to site restrictions]", False
+        
+        elif response.status_code == 404:
+            logger.warning(f"Page not found (404) for URL: {url}")
+            return "[Page not found]", False
+        
         else:
-            return "", False
+            logger.warning(f"HTTP error {response.status_code} for URL: {url}")
+            return f"[Error retrieving content: HTTP {response.status_code}]", False
     
     except Exception as e:
-        error_msg = f"Exception in scrape_webpage: {str(e)}"
+        error_msg = f"Exception in scrape_webpage for {url}: {str(e)}"
         logger.error(error_msg)
-        return "", False
+        return f"[Error: {str(e)}]", False
 
 def extract_headings(url: str) -> Dict[str, List[str]]:
     """
     Extract headings (H1, H2, H3) from a webpage
     """
     try:
+        # List of common user agents to rotate
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
+        ]
+        
+        # Select a random user agent
+        user_agent = random.choice(user_agents)
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/'
         }
-        response = requests.get(url, headers=headers)
+        
+        response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -437,25 +486,58 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
-    Generate article using GPT-4o-mini
+    Generate article using GPT-4o-mini with improved error handling
     Returns: article_content, success_status
     """
     try:
         openai.api_key = openai_api_key
         
-        # Prepare section structure
+        # Ensure semantic_structure is valid
+        if not semantic_structure:
+            semantic_structure = {"h1": f"Guide to {keyword}", "sections": []}
+        
+        # Get default H1 if not present
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        
+        # Prepare section structure with error handling
         sections_str = ""
         for section in semantic_structure.get('sections', []):
-            sections_str += f"- {section.get('h2')}\n"
-            for subsection in section.get('subsections', []):
-                sections_str += f"  - {subsection.get('h3')}\n"
+            if section and isinstance(section, dict) and 'h2' in section:
+                sections_str += f"- {section.get('h2')}\n"
+                for subsection in section.get('subsections', []):
+                    if subsection and isinstance(subsection, dict) and 'h3' in subsection:
+                        sections_str += f"  - {subsection.get('h3')}\n"
         
-        # Prepare related keywords
-        related_kw_str = ", ".join([kw.get('keyword') for kw in related_keywords[:10]])
+        # Add default section if none exist
+        if not sections_str:
+            sections_str = f"- Introduction to {keyword}\n- Key Benefits\n- How to Use\n- Tips and Best Practices\n- Conclusion\n"
         
-        # Prepare SERP features
-        serp_features_str = ", ".join([f"{feature.get('feature_type')} ({feature.get('count')})" 
-                                     for feature in serp_features[:5]])
+        # Prepare related keywords with error handling
+        related_kw_list = []
+        if related_keywords and isinstance(related_keywords, list):
+            for kw in related_keywords[:10]:
+                if kw and isinstance(kw, dict) and 'keyword' in kw:
+                    related_kw_list.append(kw.get('keyword', ''))
+        
+        # Add default keywords if none exist
+        if not related_kw_list:
+            related_kw_list = [f"{keyword} guide", f"best {keyword}", f"{keyword} tips", f"how to use {keyword}"]
+        
+        related_kw_str = ", ".join(related_kw_list)
+        
+        # Prepare SERP features with error handling
+        serp_features_list = []
+        if serp_features and isinstance(serp_features, list):
+            for feature in serp_features[:5]:
+                if feature and isinstance(feature, dict) and 'feature_type' in feature:
+                    count = feature.get('count', 1)
+                    serp_features_list.append(f"{feature.get('feature_type')} ({count})")
+        
+        # Add default features if none exist
+        if not serp_features_list:
+            serp_features_list = ["featured snippet", "people also ask", "images"]
+        
+        serp_features_str = ", ".join(serp_features_list)
         
         # Generate article
         response = openai.ChatCompletion.create(
@@ -466,7 +548,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Write a comprehensive, SEO-optimized article about "{keyword}".
                 
                 Use this semantic structure:
-                H1: {semantic_structure.get('h1')}
+                H1: {h1}
                 
                 Sections:
                 {sections_str}
@@ -533,9 +615,24 @@ def get_page_metadata(url: str) -> Tuple[str, str]:
     Get page title and meta description
     """
     try:
+        # List of common user agents to rotate
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
+        ]
+        
+        # Select a random user agent
+        user_agent = random.choice(user_agents)
+        
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.google.com/'
         }
+        
         response = requests.get(url, headers=headers, timeout=5)
         
         if response.status_code == 200:
@@ -812,7 +909,7 @@ def main():
                     # Fetch SERP results
                     start_time = time.time()
                     organic_results, serp_features, serp_success = fetch_serp_results(
-                        keyword, dataforseo_login, dataforseo_password, openai_api_key
+                        keyword, dataforseo_login, dataforseo_password
                     )
                     
                     if serp_success:
@@ -832,20 +929,20 @@ def main():
                         
                         # Fetch related keywords using DataForSEO
                         st.text("Fetching related keywords...")
-                        related_keywords, kw_success = fetch_related_keywords_dataforseo(
+                        related_keywords, kw_success = fetch_keyword_ideas_dataforseo(
                             keyword, dataforseo_login, dataforseo_password
                         )
                         
-                        if kw_success:
-                            st.session_state.results['related_keywords'] = related_keywords
+                        st.session_state.results['related_keywords'] = related_keywords
+                        
+                        st.subheader("Related Keywords")
+                        df_keywords = pd.DataFrame(related_keywords)
+                        st.dataframe(df_keywords)
+                        
+                        if not kw_success:
+                            st.info("Using default related keywords. API response was not successful.")
                             
-                            st.subheader("Related Keywords")
-                            df_keywords = pd.DataFrame(related_keywords)
-                            st.dataframe(df_keywords)
-                            
-                            st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
-                        else:
-                            st.error("Failed to fetch related keywords. Please check your DataForSEO API credentials.")
+                        st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
                     else:
                         st.error("Failed to fetch SERP data. Please check your API credentials.")
         
@@ -880,7 +977,7 @@ def main():
                             st.text(f"Scraping content from {result['url']}...")
                             content, success = scrape_webpage(result['url'])
                             
-                            if success:
+                            if success and content and content != "[Content not accessible due to site restrictions]":
                                 scraped_contents.append({
                                     'url': result['url'],
                                     'title': result['title'],
@@ -890,9 +987,15 @@ def main():
                                 # Also extract headings
                                 headings = extract_headings(result['url'])
                                 scraped_contents[-1]['headings'] = headings
+                            else:
+                                st.warning(f"Could not scrape content from {result['url']}")
                             
                             progress_bar.progress((i + 1) / len(st.session_state.results['organic_results']))
                         
+                        if not scraped_contents:
+                            st.error("Could not scrape content from any URLs. Please try a different keyword.")
+                            return
+                            
                         st.session_state.results['scraped_contents'] = scraped_contents
                         
                         # Analyze semantic structure
@@ -952,7 +1055,7 @@ def main():
                             openai_api_key
                         )
                         
-                        if article_success:
+                        if article_success and article_content:
                             st.session_state.results['article_content'] = article_content
                             
                             st.subheader("Generated Article")
@@ -960,7 +1063,7 @@ def main():
                             
                             st.success(f"Article generation completed in {format_time(time.time() - start_time)}")
                         else:
-                            st.error("Failed to generate article")
+                            st.error("Failed to generate article. Please try again.")
             
             # Show previously generated article if available
             if 'article_content' in st.session_state.results:
