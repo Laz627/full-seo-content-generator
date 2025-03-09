@@ -201,13 +201,13 @@ def create_default_keywords(keyword: str) -> List[Dict]:
         {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
     ]
 
-def fetch_keyword_suggestions_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch keyword suggestions from DataForSEO Keyword Suggestions API
-    Returns: keyword_suggestions, success_status
+    Fetch related keywords from DataForSEO Related Keywords API for more diverse suggestions
+    Returns: related_keywords, success_status
     """
     try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live"
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
         headers = {
             'Content-Type': 'application/json',
         }
@@ -217,8 +217,7 @@ def fetch_keyword_suggestions_dataforseo(keyword: str, api_login: str, api_passw
             "keyword": keyword,
             "location_code": 2840,  # USA
             "language_code": "en",
-            "include_seed_keyword": True,
-            "limit": 20  # Fetch top 20 keyword suggestions
+            "limit": 20  # Fetch top 20 related keywords
         }]
         
         # Make API request
@@ -237,20 +236,83 @@ def fetch_keyword_suggestions_dataforseo(keyword: str, api_login: str, api_passw
                 if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
                     results = data['tasks'][0]['result'][0]
                     
-                    keyword_suggestions = []
+                    related_keywords = []
                     for item in results.get('items', [])[:20]:  # Limit to top 20
-                        keyword_suggestions.append({
+                        # Extract metrics from the correct locations
+                        related_keywords.append({
                             'keyword': item.get('keyword', ''),
                             'search_volume': item.get('search_volume', 0),
                             'cpc': item.get('cpc', 0.0),
                             'competition': item.get('competition_index', 0.0)
                         })
                     
-                    if keyword_suggestions:
-                        return keyword_suggestions, True
+                    if related_keywords:
+                        return related_keywords, True
+            
+            # If primary approach fails, try with keyword_ideas endpoint
+            logger.warning(f"No related keywords found, trying keyword_ideas endpoint")
+            return fetch_keyword_ideas_backup(keyword, api_login, api_password)
+        else:
+            error_msg = f"HTTP Error: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return create_default_keywords(keyword), False
+    
+    except Exception as e:
+        error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
+        logger.error(error_msg)
+        return create_default_keywords(keyword), False
+
+def fetch_keyword_ideas_backup(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+    """
+    Backup method to fetch keyword ideas from DataForSEO Keyword Ideas API
+    Returns: keyword_ideas, success_status
+    """
+    try:
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live"
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        
+        # Prepare request data
+        post_data = [{
+            "keyword": keyword,
+            "location_code": 2840,  # USA
+            "language_code": "en",
+            "include_seed_keyword": True,
+            "limit": 20  # Fetch top 20 keyword ideas
+        }]
+        
+        # Make API request
+        response = requests.post(
+            url,
+            auth=(api_login, api_password),
+            headers=headers,
+            json=post_data
+        )
+        
+        # Process response
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
+                if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
+                    results = data['tasks'][0]['result'][0]
+                    
+                    keyword_ideas = []
+                    for item in results.get('items', [])[:20]:  # Limit to top 20
+                        # Extract keyword and metrics
+                        keyword_ideas.append({
+                            'keyword': item.get('keyword', ''),
+                            'search_volume': item.get('search_volume', 0),
+                            'cpc': item.get('cpc', 0.0),
+                            'competition': item.get('competition', 0.0)
+                        })
+                    
+                    if keyword_ideas:
+                        return keyword_ideas, True
             
             # Fallback to default keywords
-            logger.warning(f"No keyword suggestions found for '{keyword}' using DataForSEO API")
+            logger.warning(f"No keyword ideas found for '{keyword}' using DataForSEO API")
             return create_default_keywords(keyword), False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
@@ -258,7 +320,7 @@ def fetch_keyword_suggestions_dataforseo(keyword: str, api_login: str, api_passw
             return create_default_keywords(keyword), False
     
     except Exception as e:
-        error_msg = f"Exception in fetch_keyword_suggestions_dataforseo: {str(e)}"
+        error_msg = f"Exception in fetch_keyword_ideas_backup: {str(e)}"
         logger.error(error_msg)
         return create_default_keywords(keyword), False
 
@@ -925,20 +987,20 @@ def main():
                         df_features = pd.DataFrame(serp_features)
                         st.dataframe(df_features)
                         
-                        # Fetch keyword suggestions using DataForSEO
-                        st.text("Fetching keyword suggestions...")
-                        keyword_suggestions, kw_success = fetch_keyword_suggestions_dataforseo(
+                        # Fetch related keywords using DataForSEO
+                        st.text("Fetching related keywords...")
+                        related_keywords, kw_success = fetch_related_keywords_dataforseo(
                             keyword, dataforseo_login, dataforseo_password
                         )
                         
-                        st.session_state.results['related_keywords'] = keyword_suggestions
+                        st.session_state.results['related_keywords'] = related_keywords
                         
-                        st.subheader("Keyword Suggestions")
-                        df_keywords = pd.DataFrame(keyword_suggestions)
+                        st.subheader("Related Keywords")
+                        df_keywords = pd.DataFrame(related_keywords)
                         st.dataframe(df_keywords)
                         
                         if not kw_success:
-                            st.info("Using default keyword suggestions. API response was not successful.")
+                            st.info("Using default related keywords. API response was not successful.")
                             
                         st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
                     else:
@@ -1197,11 +1259,13 @@ def main():
                     if doc_success:
                         st.session_state.results['doc_stream'] = doc_stream
                         
+                        # First download button
                         st.download_button(
-                            label="Download SEO Brief",
+                            label="Download SEO Brief Now",
                             data=doc_stream,
                             file_name=f"seo_brief_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="download_brief_1"  # Added unique key
                         )
                         
                         st.success(f"SEO brief generation completed in {format_time(time.time() - start_time)}")
@@ -1224,14 +1288,15 @@ def main():
             for component, status in components:
                 st.write(f"**{component}:** {'✅ Completed' if status else '❌ Not Completed'}")
             
-            # Display download button if available
+            # Display download button if available with different key
             if 'doc_stream' in st.session_state.results:
                 st.subheader("Download SEO Brief")
                 st.download_button(
-                    label="Download SEO Brief",
+                    label="Download SEO Brief Document",  # Changed label to avoid duplicate element ID
                     data=st.session_state.results['doc_stream'],
                     file_name=f"seo_brief_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_brief_2"  # Added unique key
                 )
 
 if __name__ == "__main__":
