@@ -58,9 +58,65 @@ def format_time(seconds: float) -> str:
 # 2. API Integration - DataForSEO
 ###############################################################################
 
-def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], List[Dict], bool]:
+def classify_page_type_openai(title: str, snippet: str, openai_api_key: str) -> str:
     """
-    Fetch SERP results from DataForSEO API
+    Classify the page type using OpenAI
+    Returns: page_type (E-commerce, Article, Landing Page, Informational, etc.)
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Prepare prompt for OpenAI
+        prompt = f"""
+        Classify the following web page into one of these categories:
+        - E-commerce (selling products)
+        - Article (blog post, news article, or informational content)
+        - Landing Page (focused on conversion/lead generation)
+        - Informational (general information, guides, or reference)
+        - Tool/App (interactive tool or application)
+        - Forum/Community (discussion board or community site)
+
+        Title: {title}
+        Snippet: {snippet}
+
+        Return ONLY the category name, nothing else.
+        """
+        
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that classifies web pages based on titles and snippets."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=20
+        )
+        
+        page_type = response.choices[0].message.content.strip()
+        
+        # Normalize the response to match expected categories
+        page_type = page_type.split('\n')[0].strip()
+        
+        # Handle cases where response doesn't match one of our categories
+        valid_types = ["E-commerce", "Article", "Landing Page", "Informational", "Tool/App", "Forum/Community"]
+        if page_type not in valid_types:
+            # Find closest match
+            for valid_type in valid_types:
+                if valid_type.lower() in page_type.lower():
+                    page_type = valid_type
+                    break
+            else:
+                page_type = "Informational"  # Default if no match
+        
+        return page_type
+    
+    except Exception as e:
+        logger.error(f"Error classifying page type with OpenAI: {str(e)}")
+        return "Informational"  # Default type if there's an error
+
+def fetch_serp_results(keyword: str, api_login: str, api_password: str, openai_api_key: str) -> Tuple[List[Dict], List[Dict], bool]:
+    """
+    Fetch SERP results from DataForSEO API and classify pages using OpenAI
     Returns: organic_results, serp_features, success_status
     """
     try:
@@ -98,12 +154,19 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
                 for item in results.get('items', []):
                     if item.get('type') == 'organic':
                         if len(organic_results) < 10:  # Limit to top 10
+                            # Get title and snippet for OpenAI classification
+                            title = item.get('title', '')
+                            snippet = item.get('snippet', '')
+                            
+                            # Classify page type using OpenAI
+                            page_type = classify_page_type_openai(title, snippet, openai_api_key)
+                            
                             organic_results.append({
                                 'url': item.get('url'),
-                                'title': item.get('title'),
-                                'snippet': item.get('snippet'),
+                                'title': title,
+                                'snippet': snippet,
                                 'rank_group': item.get('rank_group'),
-                                'page_type': classify_page_type(item.get('url'), item.get('title'))
+                                'page_type': page_type
                             })
                 
                 # Extract SERP features
@@ -141,84 +204,54 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
         logger.error(error_msg)
         return [], [], False
 
-def classify_page_type(url: str, title: str) -> str:
-    """
-    Classify the page type based on URL and title
-    """
-    url = url.lower()
-    title = title.lower() if title else ""
-    
-    # E-commerce indicators
-    ecommerce_patterns = ['shop', 'store', 'buy', 'price', 'product', 'cart', 'checkout']
-    
-    # Blog/Article indicators
-    article_patterns = ['blog', 'article', 'news', 'post', 'guide', 'how to', 'tips']
-    
-    # Landing page indicators
-    landing_patterns = ['landing', 'offer', 'deal', 'limited time', 'sign up', 'join']
-    
-    # Check for e-commerce
-    if any(pattern in url for pattern in ['shop', 'product', 'cart', 'buy']):
-        return "E-commerce"
-    if any(pattern in title for pattern in ecommerce_patterns):
-        return "E-commerce"
-    
-    # Check for blog/article
-    if any(pattern in url for pattern in ['blog', 'article', 'news', 'post']):
-        return "Article"
-    if any(pattern in title for pattern in article_patterns):
-        return "Article"
-    
-    # Check for landing page
-    if any(pattern in title for pattern in landing_patterns):
-        return "Landing Page"
-    
-    # Default case
-    return "Informational"
-
 ###############################################################################
-# 3. API Integration - Keywords Everywhere
+# 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
-def fetch_related_keywords(keyword: str, api_key: str) -> Tuple[List[Dict], bool]:
+def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch related keywords from Keywords Everywhere API
+    Fetch related keywords from DataForSEO Related Keywords API
     Returns: related_keywords, success_status
     """
     try:
-        url = "https://api.keywordseverywhere.com/v1/get_related_keywords"
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
         headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
         }
         
         # Prepare request data
-        data = {
-            'dataSource': 'gkp',
-            'country': 'us',
-            'currency': 'USD',
-            'kw[]': keyword
-        }
+        post_data = [{
+            "keyword": keyword,
+            "location_code": 2840,  # USA
+            "language_code": "en",
+            "limit": 20  # Fetch top 20 related keywords
+        }]
         
         # Make API request
-        response = requests.post(url, headers=headers, data=data)
+        response = requests.post(
+            url,
+            auth=(api_login, api_password),
+            headers=headers,
+            json=post_data
+        )
         
         # Process response
         if response.status_code == 200:
             data = response.json()
-            
-            if data.get('data'):
+            if data.get('status_code') == 20000:
+                results = data['tasks'][0]['result'][0]
+                
                 related_keywords = []
-                for kw in data['data'][0].get('related', [])[:20]:  # Limit to top 20
+                for item in results.get('items', [])[:20]:  # Limit to top 20
                     related_keywords.append({
-                        'keyword': kw.get('keyword'),
-                        'search_volume': kw.get('vol', 0),
-                        'cpc': kw.get('cpc', 0.0),
-                        'competition': kw.get('competition', 0.0)
+                        'keyword': item.get('keyword'),
+                        'search_volume': item.get('search_volume', 0),
+                        'cpc': item.get('cpc', 0.0),
+                        'competition': item.get('competition_index', 0.0)
                     })
                 return related_keywords, True
             else:
-                error_msg = f"API Error: No data returned"
+                error_msg = f"API Error: {data.get('status_message')}"
                 logger.error(error_msg)
                 return [], False
         else:
@@ -227,7 +260,7 @@ def fetch_related_keywords(keyword: str, api_key: str) -> Tuple[List[Dict], bool
             return [], False
     
     except Exception as e:
-        error_msg = f"Exception in fetch_related_keywords: {str(e)}"
+        error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
         logger.error(error_msg)
         return [], False
 
@@ -747,8 +780,6 @@ def main():
     dataforseo_login = st.sidebar.text_input("DataForSEO API Login", type="password")
     dataforseo_password = st.sidebar.text_input("DataForSEO API Password", type="password")
     
-    keywords_everywhere_api_key = st.sidebar.text_input("Keywords Everywhere API Key", type="password")
-    
     openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
     
     # Initialize session state
@@ -774,14 +805,14 @@ def main():
                 st.error("Please enter a target keyword")
             elif not dataforseo_login or not dataforseo_password:
                 st.error("Please enter DataForSEO API credentials")
-            elif not keywords_everywhere_api_key:
-                st.error("Please enter Keywords Everywhere API key")
+            elif not openai_api_key:
+                st.error("Please enter OpenAI API key")
             else:
                 with st.spinner("Fetching SERP data..."):
                     # Fetch SERP results
                     start_time = time.time()
                     organic_results, serp_features, serp_success = fetch_serp_results(
-                        keyword, dataforseo_login, dataforseo_password
+                        keyword, dataforseo_login, dataforseo_password, openai_api_key
                     )
                     
                     if serp_success:
@@ -799,10 +830,10 @@ def main():
                         df_features = pd.DataFrame(serp_features)
                         st.dataframe(df_features)
                         
-                        # Fetch related keywords
+                        # Fetch related keywords using DataForSEO
                         st.text("Fetching related keywords...")
-                        related_keywords, kw_success = fetch_related_keywords(
-                            keyword, keywords_everywhere_api_key
+                        related_keywords, kw_success = fetch_related_keywords_dataforseo(
+                            keyword, dataforseo_login, dataforseo_password
                         )
                         
                         if kw_success:
@@ -814,7 +845,7 @@ def main():
                             
                             st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
                         else:
-                            st.error("Failed to fetch related keywords. Please check your API key.")
+                            st.error("Failed to fetch related keywords. Please check your DataForSEO API credentials.")
                     else:
                         st.error("Failed to fetch SERP data. Please check your API credentials.")
         
