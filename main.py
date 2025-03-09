@@ -186,13 +186,13 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
 # 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
-def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch keyword ideas from DataForSEO Keyword Ideas API
-    Returns: keyword_ideas, success_status
+    Fetch related keywords from DataForSEO Related Keywords API
+    Returns: related_keywords, success_status
     """
     try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live"
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
         headers = {
             'Content-Type': 'application/json',
         }
@@ -202,8 +202,8 @@ def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: s
             "keyword": keyword,
             "location_code": 2840,  # USA
             "language_code": "en",
-            "include_seed_keyword": True,
-            "limit": 20  # Fetch top 20 keyword ideas
+            "depth": 2,  # Get more detailed results
+            "limit": 20  # Fetch top 20 related keywords
         }]
         
         # Make API request
@@ -222,20 +222,20 @@ def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: s
                 if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
                     results = data['tasks'][0]['result'][0]
                     
-                    keyword_ideas = []
+                    related_keywords = []
                     for item in results.get('items', [])[:20]:  # Limit to top 20
-                        keyword_ideas.append({
+                        related_keywords.append({
                             'keyword': item.get('keyword', ''),
                             'search_volume': item.get('search_volume', 0),
                             'cpc': item.get('cpc', 0.0),
-                            'competition': item.get('competition', 0.0)
+                            'competition': item.get('competition_index', 0.0)
                         })
                     
-                    # Return keywords even if empty list (this is the key fix)
-                    return keyword_ideas, True
+                    if related_keywords:
+                        return related_keywords, True
             
-            # Only reach here if API response format is unexpected
-            logger.warning(f"API response format for keyword ideas unexpected for '{keyword}'")
+            # Fallback to default keywords
+            logger.warning(f"No related keywords found for '{keyword}' using DataForSEO API")
             return create_default_keywords(keyword), False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
@@ -243,7 +243,7 @@ def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: s
             return create_default_keywords(keyword), False
     
     except Exception as e:
-        error_msg = f"Exception in fetch_keyword_ideas_dataforseo: {str(e)}"
+        error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
         logger.error(error_msg)
         return create_default_keywords(keyword), False
 
