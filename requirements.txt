@@ -4,5 +4,5 @@ numpy
 requests
 bs4
 trafilatura
-openai
+openai==0.28
 python-docx
