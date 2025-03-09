@@ -911,7 +911,117 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 1
         return pages, False
 
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
+                                          openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+    """
+    Generate internal links by replacing existing text with linked versions
+    Returns: article_with_links, links_added, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Calculate max links based on word count
+        max_links = min(10, max(2, int(word_count / 1000) * 8))  # Ensure at least 2 links
+        
+        # Log for debugging
+        logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
+        
+        # Convert pages to simple format for prompt
+        pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
+                             for p in pages_with_embeddings[:30]])
+        
+        # Use a different approach - two-step process
+        # First, generate just the links to add
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an SEO expert who identifies perfect places for internal links."},
+                {"role": "user", "content": f"""
+                I need you to identify {max_links} opportunities to add internal links to this HTML article.
 
+                For each link opportunity:
+                1. Select a 2-6 word phrase from the EXISTING article text
+                2. Match it with the most relevant page from the list below
+                3. Each URL should only be used ONCE
+                4. Choose phrases that are natural anchor text
+                5. Only suggest links where there's a clear topical match
+
+                Available pages:
+                {pages_str}
+
+                HTML article:
+                {article_content}
+
+                Return JUST A JSON ARRAY of your link suggestions:
+                [
+                  {{
+                    "url": "page URL to link to",
+                    "anchor_text": "exact text from article to turn into a link",
+                    "surrounding_text": "...text before [anchor text] text after..."
+                  }},
+                  ...more link suggestions...
+                ]
+                """
+                }
+            ],
+            response_format={"type": "json_object"},  # Force JSON response
+            temperature=0.4
+        )
+        
+        # Parse the response
+        try:
+            link_suggestions = json.loads(response.choices[0].message.content)
+            
+            # If we have suggestions key, use that, otherwise use the whole object
+            if "suggestions" in link_suggestions:
+                suggestions = link_suggestions["suggestions"]
+            else:
+                # Find the first array in the JSON object
+                for key, value in link_suggestions.items():
+                    if isinstance(value, list) and len(value) > 0:
+                        suggestions = value
+                        break
+                else:
+                    suggestions = []
+            
+            logger.info(f"Generated {len(suggestions)} link suggestions")
+            
+            # Now apply these links to the article
+            article_with_links = article_content
+            for suggestion in suggestions:
+                url = suggestion.get("url", "")
+                anchor_text = suggestion.get("anchor_text", "")
+                
+                if url and anchor_text and anchor_text in article_with_links:
+                    # Replace the anchor text with linked version
+                    linked_text = f'<a href="{url}">{anchor_text}</a>'
+                    article_with_links = article_with_links.replace(anchor_text, linked_text, 1)
+                
+            # Format the final list of links
+            links_added = []
+            for suggestion in suggestions:
+                if suggestion.get("url") and suggestion.get("anchor_text"):
+                    links_added.append({
+                        "url": suggestion.get("url", ""),
+                        "anchor_text": suggestion.get("anchor_text", ""),
+                        "context": suggestion.get("surrounding_text", suggestion.get("anchor_text", ""))
+                    })
+            
+            # Check if any links were added
+            if article_content == article_with_links:
+                logger.warning("No links were added to the article")
+                return article_content, [], False
+            
+            return article_with_links, links_added, True
+            
+        except json.JSONDecodeError:
+            logger.error("Failed to parse JSON response for link suggestions")
+            return article_content, [], False
+            
+    except Exception as e:
+        error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return article_content, [], False                                         
 
 ###############################################################################
 # 9. Document Generation
