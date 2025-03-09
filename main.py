@@ -267,10 +267,10 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
                 if 'keyword_info' in seed_data:
                     keyword_info = seed_data['keyword_info']
                     related_keywords.append({
-                        'keyword': result[0].get('seed_keyword', ''),
-                        'search_volume': keyword_info.get('search_volume', 0),
-                        'cpc': keyword_info.get('cpc', 0.0),
-                        'competition': keyword_info.get('competition', 0.0)
+                        'keyword': item.get('keyword', ''),
+                        'search_volume': item.get('search_volume', 0),
+                        'cpc': item.get('cpc', 0.0) if item.get('cpc') is not None else 0.0,
+                        'competition': item.get('competition', 0.0) if item.get('competition') is not None else 0.0
                     })
             
             # Then look for related keyword items
@@ -282,9 +282,9 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
                             keyword_info = item['keyword_info']
                             related_keywords.append({
                                 'keyword': item.get('keyword', ''),
-                                'search_volume': keyword_info.get('search_volume', 0),
-                                'cpc': keyword_info.get('cpc', 0.0),
-                                'competition': keyword_info.get('competition', 0.0)
+                                'search_volume': item.get('search_volume', 0),
+                                'cpc': item.get('cpc', 0.0) if item.get('cpc') is not None else 0.0,
+                                'competition': item.get('competition', 0.0) if item.get('competition') is not None else 0.0
                             })
             
             # If we found any keywords, return them
@@ -1043,6 +1043,26 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
             
             for j, subsection in enumerate(section.get('subsections', []), 1):
                 doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
+
+        # Fix for the CPC formatting issue in Related Keywords section
+        for kw in related_keywords:
+            row_cells = kw_table.add_row().cells
+            row_cells[0].text = kw.get('keyword', '')
+            
+            # Safe handling of search volume
+            search_volume = kw.get('search_volume')
+            row_cells[1].text = str(search_volume if search_volume is not None else 0)
+            
+            # Safe handling of CPC
+            cpc_value = kw.get('cpc')
+            if cpc_value is None:
+                row_cells[2].text = "$0.00"
+            else:
+                try:
+                    row_cells[2].text = f"${float(cpc_value):.2f}"
+                except (ValueError, TypeError):
+                    # Handle case where CPC might be a string or other non-numeric value
+                    row_cells[2].text = "$0.00"
         
         # Section 4: Generated Article
         doc.add_heading('Generated Article with Internal Links', level=1)
