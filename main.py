@@ -231,11 +231,11 @@ def fetch_keyword_ideas_dataforseo(keyword: str, api_login: str, api_password: s
                             'competition': item.get('competition', 0.0)
                         })
                     
-                    if keyword_ideas:
-                        return keyword_ideas, True
+                    # Return keywords even if empty list (this is the key fix)
+                    return keyword_ideas, True
             
-            # If we got here, no keywords were found or there was an issue
-            logger.warning(f"No keyword ideas found for '{keyword}' or API response format unexpected")
+            # Only reach here if API response format is unexpected
+            logger.warning(f"API response format for keyword ideas unexpected for '{keyword}'")
             return create_default_keywords(keyword), False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
@@ -268,10 +268,18 @@ def create_default_keywords(keyword: str) -> List[Dict]:
 
 def scrape_webpage(url: str) -> Tuple[str, bool]:
     """
-    Enhanced webpage scraping with better error handling and rotating user agents
+    Enhanced webpage scraping with better error handling
     Returns: content, success_status
     """
     try:
+        # Use trafilatura to download without headers parameter
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded:
+            content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
+            if content:
+                return content, True
+        
+        # Fallback to requests + BeautifulSoup
         # List of common user agents to rotate
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -288,19 +296,9 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
             'User-Agent': user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.google.com/',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
+            'Referer': 'https://www.google.com/'
         }
         
-        # Try with trafilatura first
-        downloaded = trafilatura.fetch_url(url, headers=headers)
-        if downloaded:
-            content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
-            if content:
-                return content, True
-        
-        # Fallback to requests + BeautifulSoup
         response = requests.get(url, headers=headers, timeout=10)
         
         # Handle common status codes
