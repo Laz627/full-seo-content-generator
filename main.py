@@ -94,10 +94,10 @@ def classify_page_type(url: str, title: str, snippet: str) -> str:
     # Default to informational
     return "Informational"
 
-def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], List[Dict], bool]:
+def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], List[Dict], List[Dict], bool]:
     """
     Fetch SERP results from DataForSEO API and classify pages
-    Returns: organic_results, serp_features, success_status
+    Returns: organic_results, serp_features, paa_questions, success_status
     """
     try:
         url = "https://api.dataforseo.com/v3/serp/google/organic/live/advanced"
@@ -150,6 +150,26 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
                                 'page_type': page_type
                             })
                 
+                # Extract People Also Asked questions
+                paa_questions = []
+                for item in results.get('items', []):
+                    if item.get('type') == 'people_also_ask_element':
+                        question_data = {
+                            'question': item.get('title', ''),
+                            'expanded': []
+                        }
+                        
+                        # Extract expanded element data if available
+                        for expanded in item.get('expanded_element', []):
+                            if expanded.get('type') == 'people_also_ask_expanded_element':
+                                question_data['expanded'].append({
+                                    'url': expanded.get('url', ''),
+                                    'title': expanded.get('title', ''),
+                                    'description': expanded.get('description', '')
+                                })
+                        
+                        paa_questions.append(question_data)
+                
                 # Extract SERP features
                 serp_features = []
                 feature_counts = {}
@@ -170,21 +190,21 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
                 # Sort by count and limit to top 20
                 serp_features = sorted(serp_features, key=lambda x: x['count'], reverse=True)[:20]
                 
-                return organic_results, serp_features, True
+                return organic_results, serp_features, paa_questions, True
             else:
                 error_msg = f"API Error: {data.get('status_message')}"
                 logger.error(error_msg)
-                return [], [], False
+                return [], [], [], False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
             logger.error(error_msg)
-            return [], [], False
+            return [], [], [], False
     
     except Exception as e:
         error_msg = f"Exception in fetch_serp_results: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return [], [], False
+        return [], [], [], False
 
 ###############################################################################
 # 3. API Integration - DataForSEO for Keywords
@@ -205,10 +225,104 @@ def create_default_keywords(keyword: str) -> List[Dict]:
         {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
     ]
 
+def fetch_keyword_suggestions(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+    """
+    Fetch keyword suggestions from DataForSEO to get accurate search volume data
+    Returns: keyword_suggestions, success_status
+    """
+    try:
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live"
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        
+        # Prepare request data based on the sample JSON structure
+        post_data = [{
+            "keyword": keyword,
+            "location_code": 2840,  # USA
+            "language_code": "en",
+            "include_serp_info": True,
+            "include_seed_keyword": True,
+            "limit": 20  # Fetch top 20 suggestions
+        }]
+        
+        # Log the request for debugging
+        logger.info(f"Fetching keyword suggestions for: {keyword}")
+        
+        # Make API request
+        response = requests.post(
+            url,
+            auth=(api_login, api_password),
+            headers=headers,
+            json=post_data
+        )
+        
+        # Process response
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"Keyword Suggestions API Response status: {data.get('status_code')}")
+            
+            # Validate response
+            if data.get('status_code') != 20000 or not data.get('tasks') or len(data['tasks']) == 0:
+                logger.warning(f"Invalid API response: {data.get('status_message')}")
+                return create_default_keywords(keyword), False
+            
+            keyword_suggestions = []
+            
+            # Process results based on the specific JSON structure from sample
+            for task in data['tasks']:
+                if not task.get('result'):
+                    continue
+                
+                for result in task['result']:
+                    # First, check for seed keyword data
+                    if 'seed_keyword_data' in result and result['seed_keyword_data']:
+                        seed_data = result['seed_keyword_data']
+                        if 'keyword_info' in seed_data:
+                            keyword_info = seed_data['keyword_info']
+                            keyword_suggestions.append({
+                                'keyword': result.get('seed_keyword', ''),
+                                'search_volume': keyword_info.get('search_volume', 0),
+                                'cpc': keyword_info.get('cpc', 0.0),
+                                'competition': keyword_info.get('competition', 0.0)
+                            })
+                    
+                    # Then look for items array which contains related keywords
+                    if 'items' in result and isinstance(result['items'], list):
+                        for item in result['items']:
+                            if 'keyword_info' in item:
+                                keyword_info = item['keyword_info']
+                                keyword_suggestions.append({
+                                    'keyword': item.get('keyword', ''),
+                                    'search_volume': keyword_info.get('search_volume', 0),
+                                    'cpc': keyword_info.get('cpc', 0.0),
+                                    'competition': keyword_info.get('competition', 0.0)
+                                })
+            
+            # Check if we successfully found keywords
+            if keyword_suggestions:
+                # Sort by search volume (descending)
+                keyword_suggestions.sort(key=lambda x: x.get('search_volume', 0), reverse=True)
+                logger.info(f"Successfully extracted {len(keyword_suggestions)} keyword suggestions")
+                return keyword_suggestions, True
+            else:
+                logger.warning(f"No keyword suggestions found in the response")
+                return create_default_keywords(keyword), False
+        else:
+            error_msg = f"HTTP Error: {response.status_code} - {response.text}"
+            logger.error(error_msg)
+            return create_default_keywords(keyword), False
+    
+    except Exception as e:
+        error_msg = f"Exception in fetch_keyword_suggestions: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return create_default_keywords(keyword), False
+
 def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
     Fetch related keywords from DataForSEO Related Keywords API
-    Fixed to properly handle the API response structure
+    Uses proper API structure parsing based on the provided sample
     Returns: related_keywords, success_status
     """
     try:
@@ -217,7 +331,7 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
             'Content-Type': 'application/json',
         }
         
-        # Prepare request data
+        # Prepare request data based on the provided sample format
         post_data = [{
             "keyword": keyword,
             "language_name": "English", 
@@ -239,299 +353,53 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
         # Process response
         if response.status_code == 200:
             data = response.json()
-            
-            # Log response status
             logger.info(f"API Response status: {data.get('status_code')}")
             
             # Validate response
-            if data.get('status_code') != 20000 or not data.get('tasks') or len(data['tasks']) == 0:
+            if data.get('status_code') != 20000 or not data.get('tasks'):
                 logger.warning(f"Invalid API response: {data.get('status_message')}")
-                return create_default_keywords(keyword), False
+                return fetch_keyword_suggestions(keyword, api_login, api_password)
             
-            # Extract related keywords from response
-            all_keywords = []
+            related_keywords = []
             
-            # Process each result item
+            # Process the results following the structure of the provided JSON example
             for task in data['tasks']:
                 if not task.get('result'):
                     continue
-                    
-                for result_item in task['result']:
-                    # Extract seed keyword if available
-                    if 'seed_keyword' in result_item and result_item['seed_keyword']:
-                        seed_keyword = result_item['seed_keyword']
-                        seed_data = result_item.get('seed_keyword_data', {})
-                        
-                        if seed_data and 'keyword_info' in seed_data:
-                            keyword_info = seed_data['keyword_info']
-                            all_keywords.append({
-                                'keyword': seed_keyword,
-                                'search_volume': keyword_info.get('search_volume', 0),
-                                'cpc': keyword_info.get('cpc', 0.0),
-                                'competition': keyword_info.get('competition', 0.0)
-                            })
-                    
-                    # Process items
-                    for item in result_item.get('items', []):
-                        # Get keyword from keyword_data
+                
+                for result in task['result']:
+                    # Process items array which contains the keyword data
+                    for item in result.get('items', []):
                         if 'keyword_data' in item:
-                            kw_data = item.get('keyword_data', {})
-                            keyword_info = kw_data.get('keyword_info', {})
-                            
-                            all_keywords.append({
-                                'keyword': kw_data.get('keyword', ''),
-                                'search_volume': keyword_info.get('search_volume', 0),
-                                'cpc': keyword_info.get('cpc', 0.0),
-                                'competition': keyword_info.get('competition', 0.0)
-                            })
-                        
-                        # SAFELY check for related_keywords - this fixes the error
-                        related_keywords = item.get('related_keywords')
-                        if related_keywords and isinstance(related_keywords, list):
-                            for related_kw in related_keywords:
-                                all_keywords.append({
-                                    'keyword': related_kw,
-                                    'search_volume': 0,  # Unknown
-                                    'cpc': 0.0,  # Unknown
-                                    'competition': 0.0  # Unknown
+                            kw_data = item['keyword_data']
+                            if 'keyword_info' in kw_data:
+                                keyword_info = kw_data['keyword_info']
+                                
+                                related_keywords.append({
+                                    'keyword': kw_data.get('keyword', ''),
+                                    'search_volume': keyword_info.get('search_volume', 0),
+                                    'cpc': keyword_info.get('cpc', 0.0),
+                                    'competition': keyword_info.get('competition', 0.0)
                                 })
             
-            # If no keywords found, create alternatives based on the main keyword
-            if not all_keywords:
-                logger.warning(f"No keywords found in API response, generating alternatives")
-                return fetch_keyword_data_final_backup(keyword, api_login, api_password)
-            
-            # Filter out any duplicates
-            seen_keywords = set()
-            unique_keywords = []
-            
-            for kw in all_keywords:
-                if kw['keyword'] and kw['keyword'] not in seen_keywords:
-                    seen_keywords.add(kw['keyword'])
-                    unique_keywords.append(kw)
-            
-            return unique_keywords[:20], True
+            # Check if we found any keywords with this approach
+            if related_keywords:
+                logger.info(f"Successfully extracted {len(related_keywords)} related keywords")
+                return related_keywords, True
+            else:
+                # If no keywords found, try the keyword suggestions endpoint
+                logger.warning(f"No related keywords found, trying keyword suggestions endpoint")
+                return fetch_keyword_suggestions(keyword, api_login, api_password)
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
             logger.error(error_msg)
-            return create_default_keywords(keyword), False
-            
+            return fetch_keyword_suggestions(keyword, api_login, api_password)
+    
     except Exception as e:
         error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return create_default_keywords(keyword), False
-
-def fetch_keyword_ideas_backup(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
-    """
-    Backup method to fetch keyword ideas from DataForSEO Keyword Ideas API
-    Returns: keyword_ideas, success_status
-    """
-    try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_ideas/live"
-        headers = {
-            'Content-Type': 'application/json',
-        }
-        
-        # Prepare request data
-        post_data = [{
-            "keyword": keyword,
-            "location_code": 2840,  # USA
-            "language_code": "en",
-            "include_seed_keyword": True,
-            "limit": 20  # Fetch top 20 keyword ideas
-        }]
-        
-        # Log the request
-        logger.info(f"Fetching keyword ideas (backup) for: {keyword}")
-        
-        # Make API request
-        response = requests.post(
-            url,
-            auth=(api_login, api_password),
-            headers=headers,
-            json=post_data
-        )
-        
-        # Log full response for debugging
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"Backup API Response status: {data.get('status_code')}")
-            
-            if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
-                if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
-                    results = data['tasks'][0]['result']
-                    keyword_ideas = []
-                    
-                    # Process both potential structures
-                    # 1. Look for seed keyword data
-                    for result in results:
-                        if 'seed_keyword_data' in result:
-                            seed_data = result['seed_keyword_data']
-                            if 'keyword_info' in seed_data:
-                                keyword_info = seed_data['keyword_info']
-                                keyword_ideas.append({
-                                    'keyword': result.get('seed_keyword', ''),
-                                    'search_volume': keyword_info.get('search_volume', 0),
-                                    'cpc': keyword_info.get('cpc', 0.0),
-                                    'competition': keyword_info.get('competition', 0.0)
-                                })
-                    
-                    # 2. Look for items arrays
-                    for result in results:
-                        if 'items' in result:
-                            for item in result['items']:
-                                if 'keyword_info' in item:
-                                    keyword_info = item['keyword_info']
-                                    keyword_ideas.append({
-                                        'keyword': item.get('keyword', ''),
-                                        'search_volume': keyword_info.get('search_volume', 0),
-                                        'cpc': keyword_info.get('cpc', 0.0),
-                                        'competition': keyword_info.get('competition', 0.0)
-                                    })
-                    
-                    if keyword_ideas:
-                        logger.info(f"Successfully extracted {len(keyword_ideas)} keyword ideas from backup method")
-                        return keyword_ideas, True
-            
-            # Try a third approach: keyword suggestions
-            logger.warning(f"No keyword ideas found with backup method, trying final backup")
-            return fetch_keyword_suggestions_final_backup(keyword, api_login, api_password)
-        else:
-            error_msg = f"HTTP Error in backup method: {response.status_code} - {response.text}"
-            logger.error(error_msg)
-            return create_default_keywords(keyword), False
-    
-    except Exception as e:
-        error_msg = f"Exception in fetch_keyword_ideas_backup: {str(e)}"
-        logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        return create_default_keywords(keyword), False
-
-def fetch_keyword_data_final_backup(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
-    """
-    Final fallback that generates keyword variations when API methods fail
-    """
-    try:
-        # Generate variations of the keyword
-        variations = [
-            keyword,
-            f"{keyword} guide",
-            f"best {keyword}",
-            f"{keyword} types",
-            f"{keyword} ideas",
-            f"{keyword} designs",
-            f"how to choose {keyword}",
-            f"{keyword} styles",
-            f"modern {keyword}",
-            f"traditional {keyword}",
-            f"{keyword} for home",
-            f"{keyword} installation",
-            f"{keyword} cost",
-            f"{keyword} prices",
-            f"replacement {keyword}",
-            f"custom {keyword}",
-            f"antique {keyword}",
-            f"{keyword} restoration",
-            f"energy efficient {keyword}",
-            f"buy {keyword}"
-        ]
-        
-        # Create keywords with estimated search volumes
-        keywords = []
-        base_volume = 100
-        for i, kw in enumerate(variations):
-            # Gradually decrease search volume for variations
-            volume = max(10, base_volume - (i * 5))
-            keywords.append({
-                'keyword': kw,
-                'search_volume': volume,
-                'cpc': 0.5 + (random.random() * 1.5),  # Random CPC between 0.5 and 2.0
-                'competition': 0.1 + (random.random() * 0.6)  # Random competition between 0.1 and 0.7
-            })
-        
-        return keywords, True
-        
-    except Exception as e:
-        logger.error(f"Exception in fetch_keyword_data_final_backup: {str(e)}")
-        logger.error(traceback.format_exc())
-        return create_default_keywords(keyword), False
-
-def fetch_keyword_suggestions_final_backup(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
-    """
-    Final backup method to fetch keyword suggestions
-    Returns: keyword_suggestions, success_status
-    """
-    try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live"
-        headers = {
-            'Content-Type': 'application/json',
-        }
-        
-        # Prepare request data
-        post_data = [{
-            "keyword": keyword,
-            "location_code": 2840,  # USA
-            "language_code": "en",
-            "include_serp_info": True,
-            "include_seed_keyword": True,
-            "limit": 20  # Fetch top 20 suggestions
-        }]
-        
-        # Make API request
-        response = requests.post(
-            url,
-            auth=(api_login, api_password),
-            headers=headers,
-            json=post_data
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if data.get('status_code') == 20000 and data.get('tasks') and len(data['tasks']) > 0:
-                if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
-                    results = data['tasks'][0]['result']
-                    suggestions = []
-                    
-                    # Extract seed keyword info
-                    for result in results:
-                        if 'seed_keyword_data' in result:
-                            seed_data = result['seed_keyword_data']
-                            if 'keyword_info' in seed_data:
-                                info = seed_data['keyword_info']
-                                suggestions.append({
-                                    'keyword': result.get('seed_keyword', ''),
-                                    'search_volume': info.get('search_volume', 0),
-                                    'cpc': info.get('cpc', 0.0),
-                                    'competition': info.get('competition', 0.0)
-                                })
-                    
-                    # Extract items
-                    for result in results:
-                        if 'items' in result:
-                            for item in result['items']:
-                                keyword_info = item.get('keyword_info', {})
-                                suggestions.append({
-                                    'keyword': item.get('keyword', ''),
-                                    'search_volume': keyword_info.get('search_volume', 0),
-                                    'cpc': keyword_info.get('cpc', 0.0),
-                                    'competition': keyword_info.get('competition', 0.0)
-                                })
-                    
-                    if suggestions:
-                        return suggestions, True
-            
-            # All API methods failed, use default keywords
-            logger.warning("All API methods failed, using default keywords")
-            return create_default_keywords(keyword), False
-        else:
-            return create_default_keywords(keyword), False
-    
-    except Exception as e:
-        logger.error(f"Exception in fetch_keyword_suggestions_final_backup: {str(e)}")
-        logger.error(traceback.format_exc())
-        return create_default_keywords(keyword), False
+        return fetch_keyword_suggestions(keyword, api_login, api_password)
 
 ###############################################################################
 # 4. Web Scraping and Content Analysis
@@ -818,7 +686,7 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 ###############################################################################
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
-                     serp_features: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
+                     serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
     Generate article using GPT-4o-mini with improved error handling
     Returns: article_content, success_status
@@ -873,6 +741,13 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         serp_features_str = ", ".join(serp_features_list)
         
+        # Prepare People Also Asked questions
+        paa_str = ""
+        if paa_questions and isinstance(paa_questions, list):
+            for i, question in enumerate(paa_questions[:5], 1):
+                if question and isinstance(question, dict) and 'question' in question:
+                    paa_str += f"{i}. {question.get('question', '')}\n"
+        
         # Generate article
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
@@ -889,8 +764,10 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 
                 Include these related keywords naturally throughout the text: {related_kw_str}
                 
-                The top SERP features for this keyword are: {serp_features_str}. Make sure to optimize 
-                for these features.
+                The top SERP features for this keyword are: {serp_features_str}. Optimize for these features.
+                
+                Include answers to these 'People Also Asked' questions from Google:
+                {paa_str}
                 
                 Format the article with proper HTML heading tags (h1, h2, h3) and paragraph tags (p).
                 Use bullet points and numbered lists where appropriate.
@@ -1003,49 +880,50 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 1
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
                                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
-    Generate internal links for article content using embeddings for similarity
+    Generate internal links by REPLACING existing text with linked versions
     Returns: article_with_links, links_added, success_status
     """
     try:
         openai.api_key = openai_api_key
         
-        # Calculate max links based on word count (10 per 1000 words)
+        # Calculate max links based on word count
         max_links = min(10, max(1, int(word_count / 1000) * 10))
         
         # Convert pages to simple format for prompt
         pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
-                             for p in pages_with_embeddings[:30]])  # Limit to prevent token overflow
+                             for p in pages_with_embeddings[:30]])
         
-        # Generate internal links with emphasis on natural integration and uniqueness
+        # Generate internal links with focus on replacing existing text
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an SEO expert specializing in internal linking."},
+                {"role": "system", "content": "You are an SEO expert who seamlessly integrates internal links into existing content."},
                 {"role": "user", "content": f"""
-                Add internal links to this article by integrating them naturally within the existing content. Follow these rules:
+                I need you to add internal links to an existing article by REPLACING appropriate existing text with linked versions. Follow these strict rules:
+
+                1. Insert ONLY {max_links} links maximum (fewer if appropriate)
+                2. Each link must replace 2-5 words of EXISTING TEXT - do not add any new text
+                3. Pick relevant words or phrases that already exist in the content
+                4. Format as HTML <a href="URL">existing text as anchor</a>
+                5. CRUCIAL: Each link must REPLACE words that are ALREADY in the content
+                6. Use each URL only ONCE - no duplicate URLs
+                7. Make sure the links make logical sense for the content
+                8. DO NOT add any new sentences, paragraphs, or text
+                9. DO NOT append links to the end of paragraphs
+                10. MAINTAIN the exact HTML structure (h1, h2, h3, p, ul, li tags) of the original content
                 
-                1. Add no more than {max_links} links total (article has {word_count} words)
-                2. Place links approximately every 150-200 words
-                3. Use anchor text of 2-5 words that fits naturally in the sentence
-                4. Only link to relevant pages from the list provided
-                5. Format links as HTML <a href="URL">anchor text</a>
-                6. DO NOT add separate sentences or paragraphs for links - integrate them naturally into existing content
-                7. IMPORTANT: USE EACH URL ONLY ONCE - never use the same URL for multiple links
-                8. Make sure links don't disrupt the flow of reading - they should be seamlessly integrated
-                9. Avoid adding links at the very beginning or end of paragraphs
-                
-                Pages available for linking:
+                Available pages to link to:
                 {pages_str}
                 
-                Article content:
+                Here's the HTML content where you should insert links by REPLACING existing text:
                 {article_content}
                 
-                Also provide a JSON list of links you added in this format:
+                After adding links, provide a JSON list of links you added in this format:
                 [
                     {{
                         "url": "page URL",
-                        "anchor_text": "anchor text used",
-                        "context": "sentence or phrase containing the link"
+                        "anchor_text": "the exact anchor text used",
+                        "context": "brief phrase with ...anchor text... for context"
                     }}
                 ]
                 
@@ -1057,7 +935,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 [JSON list of links]
                 """}
             ],
-            temperature=0.3
+            temperature=0.2  # Lower temperature for more precise instructions
         )
         
         result = response.choices[0].message.content
@@ -1110,7 +988,8 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
 
 def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
                         semantic_structure: Dict, article_content: str, meta_title: str, 
-                        meta_description: str, internal_links: List[Dict] = None) -> Tuple[BytesIO, bool]:
+                        meta_description: str, paa_questions: List[Dict],
+                        internal_links: List[Dict] = None) -> Tuple[BytesIO, bool]:
     """
     Create Word document with all components
     Returns: document_stream, success_status
@@ -1155,6 +1034,18 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
             row_cells[1].text = result.get('title', '')
             row_cells[2].text = result.get('url', '')
             row_cells[3].text = result.get('page_type', '')
+        
+        # Add People Also Asked questions
+        if paa_questions:
+            doc.add_heading('People Also Asked', level=2)
+            for i, question in enumerate(paa_questions, 1):
+                q_paragraph = doc.add_paragraph(style='List Number')
+                q_paragraph.add_run(question.get('question', '')).bold = True
+                
+                # Add expanded answers if available
+                for expanded in question.get('expanded', []):
+                    if expanded.get('description'):
+                        doc.add_paragraph(expanded.get('description', ''), style='List Bullet')
         
         # Section 2: Related Keywords
         doc.add_heading('Related Keywords', level=1)
@@ -1337,9 +1228,9 @@ def main():
                 st.error("Please enter OpenAI API key")
             else:
                 with st.spinner("Fetching SERP data..."):
-                    # Fetch SERP results
+                    # Fetch SERP results (updated function with PAA questions)
                     start_time = time.time()
-                    organic_results, serp_features, serp_success = fetch_serp_results(
+                    organic_results, serp_features, paa_questions, serp_success = fetch_serp_results(
                         keyword, dataforseo_login, dataforseo_password
                     )
                     
@@ -1347,6 +1238,7 @@ def main():
                         st.session_state.results['keyword'] = keyword
                         st.session_state.results['organic_results'] = organic_results
                         st.session_state.results['serp_features'] = serp_features
+                        st.session_state.results['paa_questions'] = paa_questions
                         
                         # Show SERP results
                         st.subheader("Top 10 Organic Results")
@@ -1358,13 +1250,19 @@ def main():
                         df_features = pd.DataFrame(serp_features)
                         st.dataframe(df_features)
                         
+                        # Show People Also Asked questions
+                        if paa_questions:
+                            st.subheader("People Also Asked Questions")
+                            for q in paa_questions:
+                                st.write(f"- {q.get('question', '')}")
+                        
                         # Fetch related keywords using DataForSEO
                         st.text("Fetching related keywords...")
                         related_keywords, kw_success = fetch_related_keywords_dataforseo(
                             keyword, dataforseo_login, dataforseo_password
                         )
                         
-                        # Ensure numerical values are properly formatted
+                        # Validate related keywords data
                         validated_keywords = []
                         for kw in related_keywords:
                             validated_kw = {
@@ -1377,13 +1275,11 @@ def main():
                         
                         st.session_state.results['related_keywords'] = validated_keywords
                         
+                        # Display related keywords
                         st.subheader("Related Keywords")
                         df_keywords = pd.DataFrame(validated_keywords)
                         st.dataframe(df_keywords)
                         
-                        if not kw_success:
-                            st.info("Using default related keywords. API response was not successful.")
-                            
                         st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
                     else:
                         st.error("Failed to fetch SERP data. Please check your API credentials.")
@@ -1396,6 +1292,11 @@ def main():
             if 'related_keywords' in st.session_state.results:
                 st.subheader("Previously Fetched Related Keywords")
                 st.dataframe(pd.DataFrame(st.session_state.results['related_keywords']))
+            
+            if 'paa_questions' in st.session_state.results:
+                st.subheader("Previously Fetched 'People Also Asked' Questions")
+                for q in st.session_state.results['paa_questions']:
+                    st.write(f"- {q.get('question', '')}")
     
     # Tab 2: Content Analysis
     with tabs[1]:
@@ -1489,12 +1390,13 @@ def main():
                     with st.spinner("Generating article and meta tags..."):
                         start_time = time.time()
                         
-                        # Generate article
+                        # Generate article (updated to include PAA questions)
                         article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
                             st.session_state.results.get('related_keywords', []),
                             st.session_state.results.get('serp_features', []),
+                            st.session_state.results.get('paa_questions', []),
                             openai_api_key
                         )
                         
@@ -1601,7 +1503,7 @@ def main():
                                 
                                 status_text.text(f"Analyzing article content and generating internal links...")
                                 
-                                # Generate internal links
+                                # Generate internal links (updated function)
                                 article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
                                     article_content, pages_with_embeddings, openai_api_key, word_count
                                 )
@@ -1657,7 +1559,10 @@ def main():
                     meta_description = st.session_state.results.get('meta_description', 
                                                                   f"Learn everything about {st.session_state.results['keyword']} in our comprehensive guide.")
                     
-                    # Create Word document
+                    # Get PAA questions
+                    paa_questions = st.session_state.results.get('paa_questions', [])
+                    
+                    # Create Word document (updated to include PAA questions)
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
                         st.session_state.results['organic_results'],
@@ -1666,6 +1571,7 @@ def main():
                         article_content,
                         meta_title,
                         meta_description,
+                        paa_questions,
                         internal_links
                     )
                     
@@ -1691,6 +1597,7 @@ def main():
             components = [
                 ("Keyword", 'keyword' in st.session_state.results),
                 ("SERP Analysis", 'organic_results' in st.session_state.results),
+                ("People Also Asked", 'paa_questions' in st.session_state.results),
                 ("Related Keywords", 'related_keywords' in st.session_state.results),
                 ("Content Analysis", 'scraped_contents' in st.session_state.results),
                 ("Semantic Structure", 'semantic_structure' in st.session_state.results),
