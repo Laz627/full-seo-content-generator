@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+requests
+bs4
+trafilatura
+openai
+python-docx
