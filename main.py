@@ -126,6 +126,8 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
         # Process response
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"SERP API Response status: {data.get('status_code')}")
+            
             if data.get('status_code') == 20000:
                 results = data['tasks'][0]['result'][0]
                 
@@ -150,25 +152,56 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
                                 'page_type': page_type
                             })
                 
-                # Extract People Also Asked questions
+                # Extract People Also Asked questions - handle both possible formats
                 paa_questions = []
+                
+                # Method 1: Look for a PAA container
                 for item in results.get('items', []):
-                    if item.get('type') == 'people_also_ask_element':
-                        question_data = {
-                            'question': item.get('title', ''),
-                            'expanded': []
-                        }
+                    if item.get('type') == 'people_also_ask':
+                        logger.info(f"Found PAA container with {len(item.get('items', []))} questions")
                         
-                        # Extract expanded element data if available
-                        for expanded in item.get('expanded_element', []):
-                            if expanded.get('type') == 'people_also_ask_expanded_element':
-                                question_data['expanded'].append({
-                                    'url': expanded.get('url', ''),
-                                    'title': expanded.get('title', ''),
-                                    'description': expanded.get('description', '')
-                                })
-                        
-                        paa_questions.append(question_data)
+                        # Process PAA items within the container
+                        for paa_item in item.get('items', []):
+                            if paa_item.get('type') == 'people_also_ask_element':
+                                question_data = {
+                                    'question': paa_item.get('title', ''),
+                                    'expanded': []
+                                }
+                                
+                                # Extract expanded element data if available
+                                for expanded in paa_item.get('expanded_element', []):
+                                    if expanded.get('type') == 'people_also_ask_expanded_element':
+                                        question_data['expanded'].append({
+                                            'url': expanded.get('url', ''),
+                                            'title': expanded.get('title', ''),
+                                            'description': expanded.get('description', '')
+                                        })
+                                
+                                paa_questions.append(question_data)
+                
+                # Method 2 (fallback): Look for individual PAA elements directly in items
+                if not paa_questions:
+                    logger.info("No PAA container found, looking for individual PAA elements")
+                    for item in results.get('items', []):
+                        if item.get('type') == 'people_also_ask_element':
+                            question_data = {
+                                'question': item.get('title', ''),
+                                'expanded': []
+                            }
+                            
+                            # Extract expanded element data if available
+                            for expanded in item.get('expanded_element', []):
+                                if expanded.get('type') == 'people_also_ask_expanded_element':
+                                    question_data['expanded'].append({
+                                        'url': expanded.get('url', ''),
+                                        'title': expanded.get('title', ''),
+                                        'description': expanded.get('description', '')
+                                    })
+                            
+                            paa_questions.append(question_data)
+                
+                # Log how many PAA questions we found
+                logger.info(f"Extracted {len(paa_questions)} PAA questions")
                 
                 # Extract SERP features
                 serp_features = []
