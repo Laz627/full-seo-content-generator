@@ -17,6 +17,7 @@ import random
 from typing import List, Dict, Any, Tuple, Optional
 import logging
 import traceback
+import openpyxl
 
 # Configure logging
 logging.basicConfig(
