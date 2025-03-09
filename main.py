@@ -186,13 +186,28 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
 # 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
-def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
+def create_default_keywords(keyword: str) -> List[Dict]:
+    """Create default related keywords when API fails"""
+    return [
+        {'keyword': f"{keyword} guide", 'search_volume': 100, 'cpc': 0.5, 'competition': 0.3},
+        {'keyword': f"best {keyword}", 'search_volume': 90, 'cpc': 0.6, 'competition': 0.4},
+        {'keyword': f"{keyword} tutorial", 'search_volume': 80, 'cpc': 0.4, 'competition': 0.3},
+        {'keyword': f"how to use {keyword}", 'search_volume': 70, 'cpc': 0.3, 'competition': 0.2},
+        {'keyword': f"{keyword} benefits", 'search_volume': 60, 'cpc': 0.5, 'competition': 0.3},
+        {'keyword': f"{keyword} examples", 'search_volume': 50, 'cpc': 0.4, 'competition': 0.2},
+        {'keyword': f"{keyword} tips", 'search_volume': 40, 'cpc': 0.3, 'competition': 0.2},
+        {'keyword': f"free {keyword}", 'search_volume': 100, 'cpc': 0.7, 'competition': 0.5},
+        {'keyword': f"{keyword} alternatives", 'search_volume': 80, 'cpc': 0.8, 'competition': 0.6},
+        {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
+    ]
+
+def fetch_keyword_suggestions_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
-    Fetch related keywords from DataForSEO Related Keywords API
-    Returns: related_keywords, success_status
+    Fetch keyword suggestions from DataForSEO Keyword Suggestions API
+    Returns: keyword_suggestions, success_status
     """
     try:
-        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live"
+        url = "https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live"
         headers = {
             'Content-Type': 'application/json',
         }
@@ -202,8 +217,8 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
             "keyword": keyword,
             "location_code": 2840,  # USA
             "language_code": "en",
-            "depth": 2,  # Get more detailed results
-            "limit": 20  # Fetch top 20 related keywords
+            "include_seed_keyword": True,
+            "limit": 20  # Fetch top 20 keyword suggestions
         }]
         
         # Make API request
@@ -222,20 +237,20 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
                 if data['tasks'][0].get('result') and len(data['tasks'][0]['result']) > 0:
                     results = data['tasks'][0]['result'][0]
                     
-                    related_keywords = []
+                    keyword_suggestions = []
                     for item in results.get('items', [])[:20]:  # Limit to top 20
-                        related_keywords.append({
+                        keyword_suggestions.append({
                             'keyword': item.get('keyword', ''),
                             'search_volume': item.get('search_volume', 0),
                             'cpc': item.get('cpc', 0.0),
                             'competition': item.get('competition_index', 0.0)
                         })
                     
-                    if related_keywords:
-                        return related_keywords, True
+                    if keyword_suggestions:
+                        return keyword_suggestions, True
             
             # Fallback to default keywords
-            logger.warning(f"No related keywords found for '{keyword}' using DataForSEO API")
+            logger.warning(f"No keyword suggestions found for '{keyword}' using DataForSEO API")
             return create_default_keywords(keyword), False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
@@ -243,24 +258,9 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
             return create_default_keywords(keyword), False
     
     except Exception as e:
-        error_msg = f"Exception in fetch_related_keywords_dataforseo: {str(e)}"
+        error_msg = f"Exception in fetch_keyword_suggestions_dataforseo: {str(e)}"
         logger.error(error_msg)
         return create_default_keywords(keyword), False
-
-def create_default_keywords(keyword: str) -> List[Dict]:
-    """Create default related keywords when API fails"""
-    return [
-        {'keyword': f"{keyword} guide", 'search_volume': 100, 'cpc': 0.5, 'competition': 0.3},
-        {'keyword': f"best {keyword}", 'search_volume': 90, 'cpc': 0.6, 'competition': 0.4},
-        {'keyword': f"{keyword} tutorial", 'search_volume': 80, 'cpc': 0.4, 'competition': 0.3},
-        {'keyword': f"how to use {keyword}", 'search_volume': 70, 'cpc': 0.3, 'competition': 0.2},
-        {'keyword': f"{keyword} benefits", 'search_volume': 60, 'cpc': 0.5, 'competition': 0.3},
-        {'keyword': f"{keyword} examples", 'search_volume': 50, 'cpc': 0.4, 'competition': 0.2},
-        {'keyword': f"{keyword} tips", 'search_volume': 40, 'cpc': 0.3, 'competition': 0.2},
-        {'keyword': f"free {keyword}", 'search_volume': 100, 'cpc': 0.7, 'competition': 0.5},
-        {'keyword': f"{keyword} alternatives", 'search_volume': 80, 'cpc': 0.8, 'competition': 0.6},
-        {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
-    ]
 
 ###############################################################################
 # 4. Web Scraping and Content Analysis
@@ -272,15 +272,14 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
     Returns: content, success_status
     """
     try:
-        # Use trafilatura to download without headers parameter
+        # Use trafilatura without headers parameter
         downloaded = trafilatura.fetch_url(url)
         if downloaded:
             content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
             if content:
                 return content, True
         
-        # Fallback to requests + BeautifulSoup
-        # List of common user agents to rotate
+        # Fallback to requests + BeautifulSoup if trafilatura fails
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
@@ -288,12 +287,8 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
         ]
         
-        # Select a random user agent
-        user_agent = random.choice(user_agents)
-        
-        # Set headers
         headers = {
-            'User-Agent': user_agent,
+            'User-Agent': random.choice(user_agents),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Referer': 'https://www.google.com/'
@@ -301,7 +296,6 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
         
         response = requests.get(url, headers=headers, timeout=10)
         
-        # Handle common status codes
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
@@ -327,10 +321,6 @@ def scrape_webpage(url: str) -> Tuple[str, bool]:
         elif response.status_code == 403:
             logger.warning(f"Access forbidden (403) for URL: {url}")
             return f"[Content not accessible due to site restrictions]", False
-        
-        elif response.status_code == 404:
-            logger.warning(f"Page not found (404) for URL: {url}")
-            return "[Page not found]", False
         
         else:
             logger.warning(f"HTTP error {response.status_code} for URL: {url}")
@@ -578,86 +568,96 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
 # 7. Internal Linking
 ###############################################################################
 
-def parse_sitemap(sitemap_content: str) -> Tuple[List[Dict], bool]:
+def parse_site_pages_spreadsheet(uploaded_file) -> Tuple[List[Dict], bool]:
     """
-    Parse sitemap XML content to extract URLs and metadata
+    Parse uploaded CSV/Excel with site pages
     Returns: pages, success_status
     """
     try:
-        soup = BeautifulSoup(sitemap_content, 'xml')
-        urls = soup.find_all('url')
+        # Determine file type and read accordingly
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            logger.error(f"Unsupported file type: {uploaded_file.name}")
+            return [], False
         
+        # Check required columns
+        required_columns = ['URL', 'Title', 'Meta Description']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            logger.error(f"Missing required columns: {', '.join(missing_columns)}")
+            return [], False
+        
+        # Convert dataframe to list of dicts
         pages = []
-        for url in urls:
-            loc = url.find('loc')
-            if loc:
-                page_url = loc.text
-                # Get title and description by scraping the page
-                title, description = get_page_metadata(page_url)
-                
-                pages.append({
-                    'url': page_url,
-                    'title': title,
-                    'description': description
-                })
+        for _, row in df.iterrows():
+            pages.append({
+                'url': row['URL'],
+                'title': row['Title'],
+                'description': row['Meta Description']
+            })
         
         return pages, True
     
     except Exception as e:
-        error_msg = f"Exception in parse_sitemap: {str(e)}"
+        error_msg = f"Exception in parse_site_pages_spreadsheet: {str(e)}"
         logger.error(error_msg)
         return [], False
 
-def get_page_metadata(url: str) -> Tuple[str, str]:
+def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 10) -> Tuple[List[Dict], bool]:
     """
-    Get page title and meta description
+    Generate embeddings for site pages in batches for faster processing
+    Returns: pages_with_embeddings, success_status
     """
     try:
-        # List of common user agents to rotate
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
-        ]
+        openai.api_key = openai_api_key
         
-        # Select a random user agent
-        user_agent = random.choice(user_agents)
+        # Prepare texts to embed
+        texts = []
+        for page in pages:
+            # Combine URL, title and description for embedding
+            combined_text = f"{page['url']} {page['title']} {page['description']}"
+            texts.append(combined_text)
         
-        headers = {
-            'User-Agent': user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.google.com/'
-        }
+        # Process in batches
+        embeddings = []
+        total_batches = (len(texts) + batch_size - 1) // batch_size
         
-        response = requests.get(url, headers=headers, timeout=5)
-        
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
+        for i in range(total_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, len(texts))
             
-            title = ""
-            title_tag = soup.find('title')
-            if title_tag:
-                title = title_tag.text.strip()
+            batch_texts = texts[start_idx:end_idx]
             
-            description = ""
-            meta_desc = soup.find('meta', attrs={'name': 'description'})
-            if meta_desc and meta_desc.get('content'):
-                description = meta_desc['content'].strip()
+            response = openai.Embedding.create(
+                model="text-embedding-3-small",
+                input=batch_texts
+            )
             
-            return title, description
-        else:
-            return "", ""
+            batch_embeddings = [item['embedding'] for item in response['data']]
+            embeddings.extend(batch_embeddings)
+        
+        # Add embeddings to pages
+        pages_with_embeddings = []
+        for i, page in enumerate(pages):
+            page_with_embedding = page.copy()
+            page_with_embedding['embedding'] = embeddings[i]
+            pages_with_embeddings.append(page_with_embedding)
+        
+        return pages_with_embeddings, True
     
     except Exception as e:
-        logger.error(f"Error fetching metadata for {url}: {str(e)}")
-        return "", ""
+        error_msg = f"Exception in embed_site_pages: {str(e)}"
+        logger.error(error_msg)
+        return pages, False
 
-def generate_internal_links(article_content: str, pages: List[Dict], 
-                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
+                                          openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
-    Generate internal links for article content
+    Generate internal links for article content using embeddings for similarity
     Returns: article_with_links, links_added, success_status
     """
     try:
@@ -668,9 +668,9 @@ def generate_internal_links(article_content: str, pages: List[Dict],
         
         # Convert pages to simple format for prompt
         pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
-                             for p in pages[:30]])  # Limit to prevent token overflow
+                             for p in pages_with_embeddings[:30]])  # Limit to prevent token overflow
         
-        # Generate internal links
+        # Generate internal links using semantic matching instead of paragraphs
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -737,7 +737,7 @@ def generate_internal_links(article_content: str, pages: List[Dict],
         return article_with_links, links_added, True
     
     except Exception as e:
-        error_msg = f"Exception in generate_internal_links: {str(e)}"
+        error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
         logger.error(error_msg)
         return article_content, [], False
 
@@ -925,20 +925,20 @@ def main():
                         df_features = pd.DataFrame(serp_features)
                         st.dataframe(df_features)
                         
-                        # Fetch related keywords using DataForSEO
-                        st.text("Fetching related keywords...")
-                        related_keywords, kw_success = fetch_keyword_ideas_dataforseo(
+                        # Fetch keyword suggestions using DataForSEO
+                        st.text("Fetching keyword suggestions...")
+                        keyword_suggestions, kw_success = fetch_keyword_suggestions_dataforseo(
                             keyword, dataforseo_login, dataforseo_password
                         )
                         
-                        st.session_state.results['related_keywords'] = related_keywords
+                        st.session_state.results['related_keywords'] = keyword_suggestions
                         
-                        st.subheader("Related Keywords")
-                        df_keywords = pd.DataFrame(related_keywords)
+                        st.subheader("Keyword Suggestions")
+                        df_keywords = pd.DataFrame(keyword_suggestions)
                         st.dataframe(df_keywords)
                         
                         if not kw_success:
-                            st.info("Using default related keywords. API response was not successful.")
+                            st.info("Using default keyword suggestions. API response was not successful.")
                             
                         st.success(f"SERP analysis completed in {format_time(time.time() - start_time)}")
                     else:
@@ -1075,48 +1075,69 @@ def main():
         if 'article_content' not in st.session_state.results:
             st.warning("Please generate an article first (in the 'Article Generation' tab)")
         else:
-            st.write("Upload a sitemap XML file to generate internal link suggestions:")
-            sitemap_file = st.file_uploader("Upload Sitemap XML", type=['xml'])
+            st.write("Upload a spreadsheet with your site pages (CSV or Excel):")
+            st.write("The spreadsheet must contain columns: URL, Title, Meta Description")
             
-            sitemap_url = st.text_input("Or enter sitemap URL (e.g., https://example.com/sitemap.xml)")
+            # Create sample template button
+            if st.button("Generate Sample Template"):
+                # Create sample dataframe
+                sample_data = {
+                    'URL': ['https://example.com/page1', 'https://example.com/page2'],
+                    'Title': ['Example Page 1', 'Example Page 2'],
+                    'Meta Description': ['Description for page 1', 'Description for page 2']
+                }
+                sample_df = pd.DataFrame(sample_data)
+                
+                # Convert to CSV
+                csv = sample_df.to_csv(index=False)
+                
+                # Provide download button
+                st.download_button(
+                    label="Download Sample CSV Template",
+                    data=csv,
+                    file_name="site_pages_template.csv",
+                    mime="text/csv",
+                )
             
-            if st.button("Process Sitemap"):
+            # File uploader for spreadsheet
+            pages_file = st.file_uploader("Upload Site Pages Spreadsheet", type=['csv', 'xlsx', 'xls'])
+            
+            # Batch size for embedding
+            batch_size = st.slider("Embedding Batch Size", 5, 50, 20, 
+                                   help="Larger batch size is faster but may hit API limits")
+            
+            if st.button("Generate Internal Links"):
                 if not openai_api_key:
                     st.error("Please enter OpenAI API key")
-                elif not sitemap_file and not sitemap_url:
-                    st.error("Please either upload a sitemap file or enter a sitemap URL")
+                elif not pages_file:
+                    st.error("Please upload a spreadsheet with site pages")
                 else:
-                    with st.spinner("Processing sitemap and generating internal links..."):
+                    with st.spinner("Processing site pages and generating internal links..."):
                         start_time = time.time()
                         
-                        # Process sitemap
-                        if sitemap_file:
-                            sitemap_content = sitemap_file.read().decode('utf-8')
-                        else:
-                            try:
-                                response = requests.get(sitemap_url)
-                                if response.status_code == 200:
-                                    sitemap_content = response.text
-                                else:
-                                    st.error(f"Failed to fetch sitemap: HTTP {response.status_code}")
-                                    sitemap_content = None
-                            except Exception as e:
-                                st.error(f"Error fetching sitemap: {str(e)}")
-                                sitemap_content = None
+                        # Parse spreadsheet
+                        pages, parse_success = parse_site_pages_spreadsheet(pages_file)
                         
-                        if sitemap_content:
-                            pages, sitemap_success = parse_sitemap(sitemap_content)
+                        if parse_success and pages:
+                            # Status update
+                            status_text = st.empty()
+                            status_text.text(f"Generating embeddings for {len(pages)} site pages...")
                             
-                            if sitemap_success and pages:
-                                st.session_state.results['sitemap_pages'] = pages
-                                
+                            # Generate embeddings for site pages
+                            pages_with_embeddings, embed_success = embed_site_pages(
+                                pages, openai_api_key, batch_size
+                            )
+                            
+                            if embed_success:
                                 # Count words in the article
                                 article_content = st.session_state.results['article_content']
                                 word_count = len(re.findall(r'\w+', article_content))
                                 
+                                status_text.text(f"Analyzing article content and generating internal links...")
+                                
                                 # Generate internal links
-                                article_with_links, links_added, links_success = generate_internal_links(
-                                    article_content, pages, openai_api_key, word_count
+                                article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
+                                    article_content, pages_with_embeddings, openai_api_key, word_count
                                 )
                                 
                                 if links_success:
@@ -1137,7 +1158,9 @@ def main():
                                 else:
                                     st.error("Failed to generate internal links")
                             else:
-                                st.error("Failed to parse sitemap or no pages found")
+                                st.error("Failed to generate embeddings for site pages")
+                        else:
+                            st.error("Failed to parse spreadsheet or no pages found")
             
             # Show previously generated links if available
             if 'article_with_links' in st.session_state.results:
