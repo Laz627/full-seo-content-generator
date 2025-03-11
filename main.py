@@ -1016,9 +1016,9 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> float:
     return similarity
 
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
-                                          openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+                                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
-    Generate internal links with improved semantic matching between anchor text and page titles
+    Generate internal links using paragraph-level semantic matching with embeddings
     Returns: article_with_links, links_added, success_status
     """
     try:
@@ -1030,123 +1030,182 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         # Log for debugging
         logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
         
-        # Convert pages to simple format for prompt
-        pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
-                             for p in pages_with_embeddings[:30]])
+        # 1. Extract paragraphs from the article
+        soup = BeautifulSoup(article_content, 'html.parser')
+        paragraphs = []
+        for p_tag in soup.find_all('p'):
+            para_text = p_tag.get_text()
+            if len(para_text.split()) > 15:  # Only consider paragraphs with enough content
+                paragraphs.append({
+                    'text': para_text,
+                    'html': str(p_tag),
+                    'element': p_tag
+                })
         
-        # Use a different approach with emphasis on semantic matching
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an SEO expert who identifies perfect places for internal links with strong semantic relevance."},
-                {"role": "user", "content": f"""
-                I need you to identify {max_links} opportunities to add internal links to this HTML article.
-
-                CRITICAL LINK REQUIREMENTS:
-                1. Select 2-6 word phrases from the EXISTING article text as anchor text
-                2. The anchor text MUST contain key terms that appear in the page title it links to
-                3. For example:
-                   - Good: "window replacement options" linking to "Window Replacement Guide"
-                   - Bad: "options to consider" linking to "Window Replacement Guide"
-                   
-                4. Each URL should only be used ONCE
-                5. Choose phrases that match the content of the linked page
-                6. The semantic connection between anchor text and page title must be obvious
-
-                Available pages:
-                {pages_str}
-
-                HTML article:
-                {article_content}
-
-                Return JUST A JSON ARRAY of your link suggestions:
-                [
-                  {{
-                    "url": "page URL to link to",
-                    "anchor_text": "exact text from article to turn into a link",
-                    "surrounding_text": "...text before [anchor text] text after..."
-                  }},
-                  ...more link suggestions...
-                ]
-                """
-                }
-            ],
-            response_format={"type": "json_object"},  # Force JSON response
-            temperature=0.4
-        )
-        
-        # Parse the response
-        try:
-            link_suggestions = json.loads(response.choices[0].message.content)
-            
-            # If we have suggestions key, use that, otherwise use the whole object
-            if "suggestions" in link_suggestions:
-                suggestions = link_suggestions["suggestions"]
-            else:
-                # Find the first array in the JSON object
-                for key, value in link_suggestions.items():
-                    if isinstance(value, list) and len(value) > 0:
-                        suggestions = value
-                        break
-                else:
-                    suggestions = []
-            
-            logger.info(f"Generated {len(suggestions)} link suggestions")
-            
-            # Filter suggestions to ensure they have semantic matches
-            verified_suggestions = []
-            for suggestion in suggestions:
-                anchor_text = suggestion.get("anchor_text", "")
-                url = suggestion.get("url", "")
-                
-                # Find the page title
-                page_title = ""
-                for page in pages_with_embeddings:
-                    if page.get('url') == url:
-                        page_title = page.get('title', "")
-                        break
-                
-                # Verify and score semantic match
-                similarity_score = verify_semantic_match(anchor_text, page_title)
-                
-                # Set a threshold for acceptance (0.3 means at least 30% semantic overlap)
-                if similarity_score >= 0.3:
-                    suggestion['similarity_score'] = similarity_score
-                    verified_suggestions.append(suggestion)
-                    logger.info(f"Verified match: '{anchor_text}' matches with '{page_title}' (score: {similarity_score:.2f})")
-                else:
-                    logger.warning(f"Rejected match: '{anchor_text}' has weak semantic match with '{page_title}' (score: {similarity_score:.2f})")
-            
-            # Sort by similarity score (descending)
-            verified_suggestions.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
-            
-            logger.info(f"After verification: {len(verified_suggestions)} of {len(suggestions)} suggestions approved")
-            
-            # Apply links using the more precise function
-            article_with_links = apply_internal_links(article_content, verified_suggestions)
-            
-            # Format the final list of links
-            links_added = []
-            for suggestion in verified_suggestions:
-                if suggestion.get("url") and suggestion.get("anchor_text"):
-                    links_added.append({
-                        "url": suggestion.get("url", ""),
-                        "anchor_text": suggestion.get("anchor_text", ""),
-                        "context": suggestion.get("surrounding_text", suggestion.get("anchor_text", "")),
-                        "similarity_score": suggestion.get("similarity_score", 0)
-                    })
-            
-            # Check if any links were added
-            if article_content == article_with_links:
-                logger.warning("No links were added to the article")
-                return article_content, [], False
-            
-            return article_with_links, links_added, True
-            
-        except json.JSONDecodeError:
-            logger.error("Failed to parse JSON response for link suggestions")
+        if not paragraphs:
+            logger.warning("No paragraphs found in the article")
             return article_content, [], False
+        
+        # 2. Generate embeddings for each paragraph
+        logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs")
+        paragraph_texts = [p['text'] for p in paragraphs]
+        
+        try:
+            # Get paragraph embeddings
+            response = openai.Embedding.create(
+                model="text-embedding-3-small",
+                input=paragraph_texts
+            )
+            paragraph_embeddings = [item['embedding'] for item in response['data']]
             
+            # Add embeddings to paragraphs
+            for i, embedding in enumerate(paragraph_embeddings):
+                paragraphs[i]['embedding'] = embedding
+                
+        except Exception as e:
+            logger.error(f"Error generating paragraph embeddings: {e}")
+            return article_content, [], False
+        
+        # 3. Find the best page match for each paragraph
+        links_to_add = []
+        used_paragraphs = set()  # Track paragraphs that already have links
+        used_pages = set()       # Track pages that are already linked to
+        
+        # Only process pages that have embeddings
+        valid_pages = [p for p in pages_with_embeddings if p.get('embedding')]
+        
+        # For each paragraph, find the best matching page
+        for para_idx, paragraph in enumerate(paragraphs):
+            if len(links_to_add) >= max_links or para_idx in used_paragraphs:
+                continue
+                
+            para_embedding = paragraph.get('embedding', [])
+            if not para_embedding:
+                continue
+                
+            # Find best matching page for this paragraph
+            best_score = 0.65  # Minimum threshold for a good match
+            best_page = None
+            
+            for page in valid_pages:
+                if page['url'] in used_pages:
+                    continue
+                    
+                page_embedding = page.get('embedding', [])
+                if not page_embedding:
+                    continue
+                    
+                # Calculate cosine similarity
+                similarity = np.dot(para_embedding, page_embedding) / (
+                    np.linalg.norm(para_embedding) * np.linalg.norm(page_embedding)
+                )
+                
+                if similarity > best_score:
+                    best_score = similarity
+                    best_page = page
+            
+            # If we found a good page match
+            if best_page:
+                page_title = best_page.get('title', '')
+                para_text = paragraph['text']
+                
+                # Ask GPT to identify a good anchor text from the paragraph that relates to the page title
+                try:
+                    anchor_response = openai.ChatCompletion.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are an expert at identifying semantically relevant anchor text for links."},
+                            {"role": "user", "content": f"""
+                            Find the BEST 2-6 word phrase in this paragraph that would make a semantically relevant anchor text for a page titled "{page_title}".
+                            
+                            The anchor text MUST:
+                            1. Be an EXACT substring in the paragraph (case-sensitive)
+                            2. Contain at least one meaningful keyword from the page title
+                            3. Make sense as clickable text
+                            
+                            Paragraph:
+                            {para_text}
+                            
+                            Page title:
+                            {page_title}
+                            
+                            Return ONLY the exact anchor text phrase, nothing else.
+                            """}
+                        ],
+                        temperature=0.3
+                    )
+                    
+                    anchor_text = anchor_response.choices[0].message.content.strip()
+                    anchor_text = anchor_text.strip('"\'')  # Remove quotes if present
+                    
+                    # Verify the anchor text exists in the paragraph
+                    if anchor_text in para_text:
+                        # Add to our links list
+                        links_to_add.append({
+                            'url': best_page['url'],
+                            'anchor_text': anchor_text,
+                            'paragraph_index': para_idx,
+                            'similarity_score': best_score,
+                            'page_title': page_title
+                        })
+                        
+                        # Mark as used
+                        used_paragraphs.add(para_idx)
+                        used_pages.add(best_page['url'])
+                        
+                        logger.info(f"Found match: '{anchor_text}' in paragraph {para_idx} for page '{page_title}'")
+                except Exception as e:
+                    logger.error(f"Error identifying anchor text: {e}")
+        
+        # 4. Apply the links to the article
+        if not links_to_add:
+            logger.warning("No suitable links found to add")
+            return article_content, [], False
+        
+        # Create a deep copy of the soup to modify
+        modified_soup = BeautifulSoup(article_content, 'html.parser')
+        modified_paragraphs = modified_soup.find_all('p')
+        
+        # Apply links
+        for link in links_to_add:
+            para_idx = link['paragraph_index']
+            if para_idx < len(modified_paragraphs):
+                p_tag = modified_paragraphs[para_idx]
+                p_html = str(p_tag)
+                anchor_text = link['anchor_text']
+                url = link['url']
+                
+                # Replace the text with a linked version
+                new_html = p_tag.decode_contents().replace(
+                    anchor_text, 
+                    f'<a href="{url}">{anchor_text}</a>', 
+                    1
+                )
+                p_tag.clear()
+                p_tag.append(BeautifulSoup(new_html, 'html.parser'))
+                
+                # Add context to the link info
+                para_text = paragraphs[para_idx]['text']
+                start_pos = max(0, para_text.find(anchor_text) - 30)
+                end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
+                context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
+                
+                # Update the link details
+                link['context'] = context
+        
+        # Format for return
+        links_output = []
+        for link in links_to_add:
+            links_output.append({
+                "url": link['url'],
+                "anchor_text": link['anchor_text'],
+                "context": link['context'],
+                "page_title": link['page_title'],
+                "similarity_score": round(link['similarity_score'], 2)
+            })
+        
+        return str(modified_soup), links_output, True
+        
     except Exception as e:
         error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
         logger.error(error_msg)
