@@ -811,7 +811,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Generate article with balanced keyword usage
+        # Generate article with balanced keyword usage and no redundant questions
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -819,9 +819,9 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Write in a natural, conversational style that sounds like an experienced human writer.
                 
                 Key writing principles:
-                1. Sound like a real person talking to another person - warm, personable, knowledgeable
-                2. Use flow and rhythm that mimics natural human speech patterns
-                3. Create content that's both informative and engaging
+                1. Write clear, direct content that informs and engages the reader
+                2. Use language that flows naturally without sounding formulaic
+                3. Create content that's substantive and detailed
                 4. Balance keyword usage with natural variation"""},
                 
                 {"role": "user", "content": f"""
@@ -838,14 +838,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 2. Include specific examples, practical details, and evidence
                 3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
                 4. IMPORTANT DIRECTION ON KEYWORD USAGE:
-                   - Use the exact term "{keyword}" naturally throughout the text, especially when:
-                     * Introducing a new section
-                     * Explaining core concepts
-                     * Making important points
-                   - Occasionally use natural variations (like "these windows" or "such features") ONLY when:
-                     * The reference is clear from context
-                     * It improves readability
-                     * It prevents awkward repetition in the same paragraph
+                   - Use the exact term "{keyword}" naturally throughout the text
+                   - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
                    - DO NOT force awkward substitutions or consistently avoid the main term
                    
                 5. Write with natural transitions between ideas without relying on transition phrases
@@ -855,12 +849,20 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 {paa_str}
                 9. Optimize for these SERP features: {serp_features_str}
                 
-                Writing style:
-                1. Write like an expert talking to a friend - knowledgeable but conversational
-                2. Use contractions (don't, you'll, they're) where it sounds natural
-                3. Occasionally ask rhetorical questions to engage the reader
-                4. Begin paragraphs with different structures to avoid monotony
-                5. Connect ideas organically through context, not through obvious transitions
+                CRITICAL WRITING INSTRUCTIONS:
+                1. DO NOT use rhetorical questions in the content, especially:
+                   - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
+                   - DO NOT repeat the heading as a question in the paragraph
+                   - AVOID using questions to transition between topics
+                
+                2. Start paragraphs with direct, informative statements instead:
+                   - GOOD: "Arched windows are characterized by their curved tops..."
+                   - BAD: "What makes arched windows special? These windows are characterized..."
+                
+                3. Write like an expert explaining a topic clearly and directly:
+                   - Use contractions (don't, you'll, they're) where it sounds natural
+                   - Vary paragraph openings to maintain reader interest
+                   - Connect ideas through logical progression, not forced transitions
                 
                 Format the article with proper HTML:
                 - Main title in <h1> tags
@@ -872,7 +874,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
                 """}
             ],
-            temperature=0.6  # Slightly lower temperature for more balanced output
+            temperature=0.5  # Lower temperature for more controlled output
         )
         
         article_content = response.choices[0].message.content
