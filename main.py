@@ -718,6 +718,36 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 # 7. Content Generation
 ###############################################################################
 
+def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
+    """
+    Verify that anchor text and page title have meaningful word overlap after removing stop words
+    """
+    # Define common stop words
+    stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 
+                  'by', 'about', 'as', 'is', 'are', 'was', 'were', 'of', 'from', 'into', 'during',
+                  'after', 'before', 'above', 'below', 'between', 'under', 'over', 'through', 'it',
+                  'its', 'this', 'that', 'these', 'those', 'their', 'them', 'they', 'he', 'she',
+                  'his', 'her', 'him', 'we', 'us', 'our', 'you', 'your', 'i', 'me', 'my', 'myself',
+                  'yourself', 'himself', 'herself', 'itself', 'themselves', 'ourselves', 'yourselves',
+                  'which', 'who', 'whom', 'whose', 'what', 'when', 'where', 'why', 'how', 'if', 'then',
+                  'else', 'so', 'because', 'while', 'each', 'such', 'only', 'very', 'some', 'will',
+                  'would', 'should', 'could', 'can', 'may', 'might', 'must', 'shall', 'not', 'no',
+                  'nor', 'all', 'any', 'both', 'either', 'neither', 'few', 'many', 'more', 'most',
+                  'other', 'some', 'such', 'than', 'too', 'very', 'just', 'ever', 'also'}
+    
+    # Convert to lowercase and tokenize
+    anchor_words = {word.lower() for word in re.findall(r'\b\w+\b', anchor_text)}
+    title_words = {word.lower() for word in re.findall(r'\b\w+\b', page_title)}
+    
+    # Remove stop words
+    anchor_meaningful = anchor_words - stop_words
+    title_meaningful = title_words - stop_words
+    
+    # Check for meaningful overlaps
+    overlaps = anchor_meaningful.intersection(title_meaningful)
+    
+    return len(overlaps) > 0
+
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
@@ -786,8 +816,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """You are an expert content writer with deep subject matter expertise.
-                Write in a straightforward, authoritative style without fluff or filler phrases.
-                Focus on providing detailed, specific information with concrete examples and evidence."""},
+                Write in a straightforward, authoritative style with no fluff or filler phrases.
+                Focus on providing factual, specific information with concrete examples and evidence."""},
                 {"role": "user", "content": f"""
                 Write a comprehensive, expert-level article about "{keyword}".
                 
@@ -800,13 +830,17 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Content requirements:
                 1. Write thorough, information-rich paragraphs (minimum 150 words per section)
                 2. Include specific examples, data points, and practical details in each section
-                3. Use direct, precise language - avoid filler phrases like "it's important to note" or "needless to say"
-                4. Keep headings concise and descriptive (max 8 words)
-                5. Maintain a professional tone throughout - no excessive enthusiasm or obvious marketing language
-                6. Include the related keywords naturally: {related_kw_str}
-                7. Answer these 'People Also Asked' questions within the article text:
+                3. Use direct, precise language - STRICTLY AVOID:
+                   - Filler words like "Additionally", "Moreover", "Furthermore", "Also"
+                   - Phrases like "For example", "For instance", "Similarly", "In particular"
+                   - Transitions like "It's worth noting", "It's important to understand"
+                4. Start sentences with the main point - not with filler transitions
+                5. Keep headings concise and descriptive (max 8 words)
+                6. Maintain a professional tone throughout
+                7. Include the related keywords naturally: {related_kw_str}
+                8. Answer these 'People Also Asked' questions within the article text:
                 {paa_str}
-                8. Optimize for these SERP features: {serp_features_str}
+                9. Optimize for these SERP features: {serp_features_str}
                 
                 Format the article with proper HTML:
                 - Main title in <h1> tags
@@ -953,7 +987,9 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 2. Match it with the most relevant page from the list below
                 3. Each URL should only be used ONCE
                 4. Choose phrases that are natural anchor text
-                5. Only suggest links where there's a clear topical match
+                5. CRITICAL: The anchor text MUST contain at least one meaningful word that appears in the title of the linked page
+                6. Skip common/stop words when considering matches (words like "the", "of", "and", etc.)
+                7. Only suggest links where there's a clear topical match
 
                 Available pages:
                 {pages_str}
@@ -995,12 +1031,34 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             
             logger.info(f"Generated {len(suggestions)} link suggestions")
             
+            # Filter suggestions to ensure they have semantic matches
+            verified_suggestions = []
+            for suggestion in suggestions:
+                anchor_text = suggestion.get("anchor_text", "")
+                url = suggestion.get("url", "")
+                
+                # Find the page title
+                page_title = ""
+                for page in pages_with_embeddings:
+                    if page.get('url') == url:
+                        page_title = page.get('title', "")
+                        break
+                
+                # Verify semantic match
+                if verify_semantic_match(anchor_text, page_title):
+                    verified_suggestions.append(suggestion)
+                    logger.info(f"Verified match: '{anchor_text}' matches with '{page_title}'")
+                else:
+                    logger.warning(f"Rejected match: '{anchor_text}' has no semantic match with '{page_title}'")
+            
+            logger.info(f"After verification: {len(verified_suggestions)} of {len(suggestions)} suggestions approved")
+            
             # Apply links using the more precise function
-            article_with_links = apply_internal_links(article_content, suggestions)
+            article_with_links = apply_internal_links(article_content, verified_suggestions)
             
             # Format the final list of links
             links_added = []
-            for suggestion in suggestions:
+            for suggestion in verified_suggestions:
                 if suggestion.get("url") and suggestion.get("anchor_text"):
                     links_added.append({
                         "url": suggestion.get("url", ""),
