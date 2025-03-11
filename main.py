@@ -975,10 +975,50 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 1
         logger.error(error_msg)
         return pages, False
 
+def verify_semantic_match(anchor_text: str, page_title: str) -> float:
+    """
+    Verify and score the semantic match between anchor text and page title
+    Returns a similarity score (0-1)
+    """
+    # Define common stop words
+    stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 
+                  'by', 'about', 'as', 'is', 'are', 'was', 'were', 'of', 'from', 'into', 'during',
+                  'after', 'before', 'above', 'below', 'between', 'under', 'over', 'through'}
+    
+    # Convert to lowercase and tokenize
+    anchor_words = {word.lower() for word in re.findall(r'\b\w+\b', anchor_text)}
+    title_words = {word.lower() for word in re.findall(r'\b\w+\b', page_title)}
+    
+    # Remove stop words
+    anchor_meaningful = anchor_words - stop_words
+    title_meaningful = title_words - stop_words
+    
+    if not anchor_meaningful or not title_meaningful:
+        return 0.0
+    
+    # Find overlapping words
+    overlaps = anchor_meaningful.intersection(title_meaningful)
+    
+    # Calculate similarity score based on overlap percentage
+    # (weighted toward the anchor text's coverage of title words)
+    if len(overlaps) == 0:
+        return 0.0
+    
+    # Calculate percentage of title words covered by anchor text
+    title_coverage = len(overlaps) / len(title_meaningful)
+    
+    # Calculate percentage of anchor text words that appear in title
+    anchor_precision = len(overlaps) / len(anchor_meaningful)
+    
+    # Combined score (weighted toward title coverage)
+    similarity = (title_coverage * 0.7) + (anchor_precision * 0.3)
+    
+    return similarity
+
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
                                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
-    Generate internal links by replacing existing text with linked versions
+    Generate internal links with improved semantic matching between anchor text and page titles
     Returns: article_with_links, links_added, success_status
     """
     try:
@@ -994,23 +1034,24 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         pages_str = "\n".join([f"URL: {p['url']}, Title: {p['title']}, Description: {p['description']}" 
                              for p in pages_with_embeddings[:30]])
         
-        # Use a different approach - two-step process
-        # First, generate just the links to add
+        # Use a different approach with emphasis on semantic matching
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an SEO expert who identifies perfect places for internal links."},
+                {"role": "system", "content": "You are an SEO expert who identifies perfect places for internal links with strong semantic relevance."},
                 {"role": "user", "content": f"""
                 I need you to identify {max_links} opportunities to add internal links to this HTML article.
 
-                For each link opportunity:
-                1. Select a 2-6 word phrase from the EXISTING article text
-                2. Match it with the most relevant page from the list below
-                3. Each URL should only be used ONCE
-                4. Choose phrases that are natural anchor text
-                5. CRITICAL: The anchor text MUST contain at least one meaningful word that appears in the title of the linked page
-                6. Skip common/stop words when considering matches (words like "the", "of", "and", etc.)
-                7. Only suggest links where there's a clear topical match
+                CRITICAL LINK REQUIREMENTS:
+                1. Select 2-6 word phrases from the EXISTING article text as anchor text
+                2. The anchor text MUST contain key terms that appear in the page title it links to
+                3. For example:
+                   - Good: "window replacement options" linking to "Window Replacement Guide"
+                   - Bad: "options to consider" linking to "Window Replacement Guide"
+                   
+                4. Each URL should only be used ONCE
+                5. Choose phrases that match the content of the linked page
+                6. The semantic connection between anchor text and page title must be obvious
 
                 Available pages:
                 {pages_str}
@@ -1065,12 +1106,19 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                         page_title = page.get('title', "")
                         break
                 
-                # Verify semantic match
-                if verify_semantic_match(anchor_text, page_title):
+                # Verify and score semantic match
+                similarity_score = verify_semantic_match(anchor_text, page_title)
+                
+                # Set a threshold for acceptance (0.3 means at least 30% semantic overlap)
+                if similarity_score >= 0.3:
+                    suggestion['similarity_score'] = similarity_score
                     verified_suggestions.append(suggestion)
-                    logger.info(f"Verified match: '{anchor_text}' matches with '{page_title}'")
+                    logger.info(f"Verified match: '{anchor_text}' matches with '{page_title}' (score: {similarity_score:.2f})")
                 else:
-                    logger.warning(f"Rejected match: '{anchor_text}' has no semantic match with '{page_title}'")
+                    logger.warning(f"Rejected match: '{anchor_text}' has weak semantic match with '{page_title}' (score: {similarity_score:.2f})")
+            
+            # Sort by similarity score (descending)
+            verified_suggestions.sort(key=lambda x: x.get('similarity_score', 0), reverse=True)
             
             logger.info(f"After verification: {len(verified_suggestions)} of {len(suggestions)} suggestions approved")
             
@@ -1084,7 +1132,8 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                     links_added.append({
                         "url": suggestion.get("url", ""),
                         "anchor_text": suggestion.get("anchor_text", ""),
-                        "context": suggestion.get("surrounding_text", suggestion.get("anchor_text", ""))
+                        "context": suggestion.get("surrounding_text", suggestion.get("anchor_text", "")),
+                        "similarity_score": suggestion.get("similarity_score", 0)
                     })
             
             # Check if any links were added
