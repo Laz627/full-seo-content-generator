@@ -751,7 +751,7 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
-    Generate comprehensive article with natural language flow, varied references, and engaging style
+    Generate comprehensive article with natural language flow and balanced keyword usage
     Returns: article_content, success_status
     """
     try:
@@ -811,12 +811,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Extract main topic terms to assist with variation
-        main_term = keyword
-        main_words = re.findall(r'\w+', keyword)
-        main_singular = main_words[-1] if main_words else keyword
-        
-        # Generate article with improved instructions for natural language flow
+        # Generate article with balanced keyword usage
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -826,8 +821,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Key writing principles:
                 1. Sound like a real person talking to another person - warm, personable, knowledgeable
                 2. Use flow and rhythm that mimics natural human speech patterns
-                3. Maintain expertise without sounding academic or robotic
-                4. Avoid repetitiveness in vocabulary, sentence structure, and paragraph openings"""},
+                3. Create content that's both informative and engaging
+                4. Balance keyword usage with natural variation"""},
                 
                 {"role": "user", "content": f"""
                 Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
@@ -842,14 +837,16 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 1. Create substantive paragraphs with thorough information (150+ words per section)
                 2. Include specific examples, practical details, and evidence
                 3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
-                4. VERY IMPORTANT: Don't overuse the phrase "{keyword}" - use varied terms like:
-                   - "these architectural features"
-                   - "such design elements"
-                   - "this style of window"
-                   - "these curved openings"
-                   - "this distinctive design"
-                   - "these elegant features"
-                   - Use pronouns (they, them, these) when the reference is clear
+                4. IMPORTANT DIRECTION ON KEYWORD USAGE:
+                   - Use the exact term "{keyword}" naturally throughout the text, especially when:
+                     * Introducing a new section
+                     * Explaining core concepts
+                     * Making important points
+                   - Occasionally use natural variations (like "these windows" or "such features") ONLY when:
+                     * The reference is clear from context
+                     * It improves readability
+                     * It prevents awkward repetition in the same paragraph
+                   - DO NOT force awkward substitutions or consistently avoid the main term
                    
                 5. Write with natural transitions between ideas without relying on transition phrases
                 6. Vary sentence structure - mix simple, compound, and complex sentences
@@ -875,7 +872,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
                 """}
             ],
-            temperature=0.7  # Slightly higher temperature for more natural language variation
+            temperature=0.6  # Slightly lower temperature for more balanced output
         )
         
         article_content = response.choices[0].message.content
