@@ -751,7 +751,7 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
-    Generate comprehensive article with detailed paragraphs and natural language flow
+    Generate comprehensive article with natural language flow, varied references, and engaging style
     Returns: article_content, success_status
     """
     try:
@@ -811,22 +811,26 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
+        # Extract main topic terms to assist with variation
+        main_term = keyword
+        main_words = re.findall(r'\w+', keyword)
+        main_singular = main_words[-1] if main_words else keyword
+        
         # Generate article with improved instructions for natural language flow
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": """You are an expert content writer with deep subject matter expertise.
-                Write in a straightforward, authoritative style with no fluff or filler phrases.
-                Focus on providing factual, specific information with concrete examples and evidence.
-
-                Writing guidelines:
-                1. Vary sentence length and structure - combine short sentences into longer, flowing ones where appropriate
-                2. Avoid excessive repetition of the main topic terms - use pronouns and alternative phrasings 
-                3. Create natural paragraph flow with proper transitions between ideas
-                4. Use varied vocabulary and sentence constructions
-                5. Write as a human expert would, with rhythm and cadence in your prose"""},
+                {"role": "system", "content": f"""You are an expert content writer crafting engaging, informative articles.
+                Write in a natural, conversational style that sounds like an experienced human writer.
+                
+                Key writing principles:
+                1. Sound like a real person talking to another person - warm, personable, knowledgeable
+                2. Use flow and rhythm that mimics natural human speech patterns
+                3. Maintain expertise without sounding academic or robotic
+                4. Avoid repetitiveness in vocabulary, sentence structure, and paragraph openings"""},
+                
                 {"role": "user", "content": f"""
-                Write a comprehensive, expert-level article about "{keyword}".
+                Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
                 
                 Use this semantic structure:
                 H1: {h1}
@@ -835,24 +839,31 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 {sections_str}
                 
                 Content requirements:
-                1. Write thorough, information-rich paragraphs (minimum 150 words per section)
-                2. Include specific examples, data points, and practical details in each section
-                3. Use direct, precise language - STRICTLY AVOID:
-                   - Filler words like "Additionally", "Moreover", "Furthermore", "Also"
-                   - Phrases like "For example", "For instance", "Similarly", "In particular"
-                   - Transitions like "It's worth noting", "It's important to understand"
-                4. Start sentences with the main point - not with filler transitions
-                5. Keep headings concise and descriptive (max 8 words)
-                6. Maintain a professional tone throughout
+                1. Create substantive paragraphs with thorough information (150+ words per section)
+                2. Include specific examples, practical details, and evidence
+                3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
+                4. VERY IMPORTANT: Don't overuse the phrase "{keyword}" - use varied terms like:
+                   - "these architectural features"
+                   - "such design elements"
+                   - "this style of window"
+                   - "these curved openings"
+                   - "this distinctive design"
+                   - "these elegant features"
+                   - Use pronouns (they, them, these) when the reference is clear
+                   
+                5. Write with natural transitions between ideas without relying on transition phrases
+                6. Vary sentence structure - mix simple, compound, and complex sentences
                 7. Include the related keywords naturally: {related_kw_str}
-                8. Answer these 'People Also Asked' questions within the article text:
+                8. Address these questions in your content:
                 {paa_str}
                 9. Optimize for these SERP features: {serp_features_str}
-                10. IMPORTANT: After writing the first draft, revise to:
-                    - Combine short, choppy sentences into longer, flowing ones
-                    - Vary your references to the main topic (don't repeat "{keyword}" excessively)
-                    - Use pronouns, descriptive alternatives, and varied terms to reference the topic
-                    - Ensure natural transitions between ideas without using filler phrases
+                
+                Writing style:
+                1. Write like an expert talking to a friend - knowledgeable but conversational
+                2. Use contractions (don't, you'll, they're) where it sounds natural
+                3. Occasionally ask rhetorical questions to engage the reader
+                4. Begin paragraphs with different structures to avoid monotony
+                5. Connect ideas organically through context, not through obvious transitions
                 
                 Format the article with proper HTML:
                 - Main title in <h1> tags
@@ -861,11 +872,10 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 - Paragraphs in <p> tags
                 - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                 
-                The article should be authoritative, factually accurate, and comprehensive.
-                Aim for around 1,800-2,200 words total with substantive, detailed content in each section.
+                Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
                 """}
             ],
-            temperature=0.5
+            temperature=0.7  # Slightly higher temperature for more natural language variation
         )
         
         article_content = response.choices[0].message.content
