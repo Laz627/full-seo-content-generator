@@ -751,7 +751,7 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
     """
-    Generate comprehensive article with detailed paragraphs and concise headings
+    Generate comprehensive article with detailed paragraphs and natural language flow
     Returns: article_content, success_status
     """
     try:
@@ -811,13 +811,20 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Generate article with improved instructions for content depth and concise language
+        # Generate article with improved instructions for natural language flow
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": """You are an expert content writer with deep subject matter expertise.
                 Write in a straightforward, authoritative style with no fluff or filler phrases.
-                Focus on providing factual, specific information with concrete examples and evidence."""},
+                Focus on providing factual, specific information with concrete examples and evidence.
+
+                Writing guidelines:
+                1. Vary sentence length and structure - combine short sentences into longer, flowing ones where appropriate
+                2. Avoid excessive repetition of the main topic terms - use pronouns and alternative phrasings 
+                3. Create natural paragraph flow with proper transitions between ideas
+                4. Use varied vocabulary and sentence constructions
+                5. Write as a human expert would, with rhythm and cadence in your prose"""},
                 {"role": "user", "content": f"""
                 Write a comprehensive, expert-level article about "{keyword}".
                 
@@ -841,6 +848,11 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 8. Answer these 'People Also Asked' questions within the article text:
                 {paa_str}
                 9. Optimize for these SERP features: {serp_features_str}
+                10. IMPORTANT: After writing the first draft, revise to:
+                    - Combine short, choppy sentences into longer, flowing ones
+                    - Vary your references to the main topic (don't repeat "{keyword}" excessively)
+                    - Use pronouns, descriptive alternatives, and varied terms to reference the topic
+                    - Ensure natural transitions between ideas without using filler phrases
                 
                 Format the article with proper HTML:
                 - Main title in <h1> tags
