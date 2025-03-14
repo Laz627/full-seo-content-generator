@@ -749,9 +749,11 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
     return len(overlaps) > 0
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
-                     serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
+                     serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str, 
+                     guidance_only: bool = False) -> Tuple[str, bool]:
     """
-    Generate comprehensive article with natural language flow and balanced keyword usage
+    Generate comprehensive article with natural language flow and balanced keyword usage.
+    If guidance_only is True, will generate writing guidance instead of full content.
     Returns: article_content, success_status
     """
     try:
@@ -811,74 +813,118 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Generate article with balanced keyword usage and no redundant questions
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": f"""You are an expert content writer crafting engaging, informative articles.
-                Write in a natural, conversational style that sounds like an experienced human writer.
-                
-                Key writing principles:
-                1. Write clear, direct content that informs and engages the reader
-                2. Use language that flows naturally without sounding formulaic
-                3. Create content that's substantive and detailed
-                4. Balance keyword usage with natural variation"""},
-                
-                {"role": "user", "content": f"""
-                Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
-                
-                Use this semantic structure:
-                H1: {h1}
-                
-                Sections:
-                {sections_str}
-                
-                Content requirements:
-                1. Create substantive paragraphs with thorough information (150+ words per section)
-                2. Include specific examples, practical details, and evidence
-                3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
-                4. IMPORTANT DIRECTION ON KEYWORD USAGE:
-                   - Use the exact term "{keyword}" naturally throughout the text
-                   - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
-                   - DO NOT force awkward substitutions or consistently avoid the main term
-                   
-                5. Write with natural transitions between ideas without relying on transition phrases
-                6. Vary sentence structure - mix simple, compound, and complex sentences
-                7. Include the related keywords naturally: {related_kw_str}
-                8. Address these questions in your content:
-                {paa_str}
-                9. Optimize for these SERP features: {serp_features_str}
-                
-                CRITICAL WRITING INSTRUCTIONS:
-                1. DO NOT use rhetorical questions in the content, especially:
-                   - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
-                   - DO NOT repeat the heading as a question in the paragraph
-                   - AVOID using questions to transition between topics
-                
-                2. Start paragraphs with direct, informative statements instead:
-                   - GOOD: "Arched windows are characterized by their curved tops..."
-                   - BAD: "What makes arched windows special? These windows are characterized..."
-                
-                3. Write like an expert explaining a topic clearly and directly:
-                   - Use contractions (don't, you'll, they're) where it sounds natural
-                   - Vary paragraph openings to maintain reader interest
-                   - Connect ideas through logical progression, not forced transitions
-                
-                Format the article with proper HTML:
-                - Main title in <h1> tags
-                - Section headings in <h2> tags
-                - Subsection headings in <h3> tags
-                - Paragraphs in <p> tags
-                - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
-                
-                Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
-                """}
-            ],
-            temperature=0.5  # Lower temperature for more controlled output
-        )
-        
-        article_content = response.choices[0].message.content
-        return article_content, True
+        if guidance_only:
+            # Generate writing guidance for each section
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert SEO content strategist who provides detailed writing guidance."},
+                    {"role": "user", "content": f"""
+                    Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
+                    
+                    For each section (H1, H2s, and H3s), provide:
+                    1. The key points to cover
+                    2. Relevant statistics or data to mention (if applicable)
+                    3. Tone and approach recommendations
+                    4. Specific keywords to include
+                    5. Approximate word count target
+                    
+                    Use this semantic structure:
+                    H1: {h1}
+                    
+                    Sections:
+                    {sections_str}
+                    
+                    Content context:
+                    - Main keyword: {keyword}
+                    - Related keywords to incorporate: {related_kw_str}
+                    - Optimize for these SERP features: {serp_features_str}
+                    - Questions to address: {paa_str}
+                    
+                    Format the guidance with proper HTML:
+                    - Main title in <h1> tags
+                    - Section headings in <h2> tags
+                    - Subsection headings in <h3> tags
+                    - Guidance points in <p> tags
+                    - Use <ul>, <li> for bullet points
+                    
+                    Aim for comprehensive guidance that will help a writer create a 1,800-2,200 word article.
+                    """}
+                ],
+                temperature=0.5
+            )
+            
+            guidance_content = response.choices[0].message.content
+            return guidance_content, True
+        else:
+            # Generate full article with balanced keyword usage and no redundant questions
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"""You are an expert content writer crafting engaging, informative articles.
+                    Write in a natural, conversational style that sounds like an experienced human writer.
+                    
+                    Key writing principles:
+                    1. Write clear, direct content that informs and engages the reader
+                    2. Use language that flows naturally without sounding formulaic
+                    3. Create content that's substantive and detailed
+                    4. Balance keyword usage with natural variation"""},
+                    
+                    {"role": "user", "content": f"""
+                    Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
+                    
+                    Use this semantic structure:
+                    H1: {h1}
+                    
+                    Sections:
+                    {sections_str}
+                    
+                    Content requirements:
+                    1. Create substantive paragraphs with thorough information (150+ words per section)
+                    2. Include specific examples, practical details, and evidence
+                    3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
+                    4. IMPORTANT DIRECTION ON KEYWORD USAGE:
+                       - Use the exact term "{keyword}" naturally throughout the text
+                       - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
+                       - DO NOT force awkward substitutions or consistently avoid the main term
+                       
+                    5. Write with natural transitions between ideas without relying on transition phrases
+                    6. Vary sentence structure - mix simple, compound, and complex sentences
+                    7. Include the related keywords naturally: {related_kw_str}
+                    8. Address these questions in your content:
+                    {paa_str}
+                    9. Optimize for these SERP features: {serp_features_str}
+                    
+                    CRITICAL WRITING INSTRUCTIONS:
+                    1. DO NOT use rhetorical questions in the content, especially:
+                       - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
+                       - DO NOT repeat the heading as a question in the paragraph
+                       - AVOID using questions to transition between topics
+                    
+                    2. Start paragraphs with direct, informative statements instead:
+                       - GOOD: "Arched windows are characterized by their curved tops..."
+                       - BAD: "What makes arched windows special? These windows are characterized..."
+                    
+                    3. Write like an expert explaining a topic clearly and directly:
+                       - Use contractions (don't, you'll, they're) where it sounds natural
+                       - Vary paragraph openings to maintain reader interest
+                       - Connect ideas through logical progression, not forced transitions
+                    
+                    Format the article with proper HTML:
+                    - Main title in <h1> tags
+                    - Section headings in <h2> tags
+                    - Subsection headings in <h3> tags
+                    - Paragraphs in <p> tags
+                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                    
+                    Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
+                    """}
+                ],
+                temperature=0.5  # Lower temperature for more controlled output
+            )
+            
+            article_content = response.choices[0].message.content
+            return article_content, True
     
     except Exception as e:
         error_msg = f"Exception in generate_article: {str(e)}"
@@ -1274,7 +1320,7 @@ def apply_internal_links(article_content: str, link_suggestions: List[Dict]) -> 
 def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
                         semantic_structure: Dict, article_content: str, meta_title: str, 
                         meta_description: str, paa_questions: List[Dict],
-                        internal_links: List[Dict] = None) -> Tuple[BytesIO, bool]:
+                        internal_links: List[Dict] = None, guidance_only: bool = False) -> Tuple[BytesIO, bool]:
     """
     Create Word document with all components
     Returns: document_stream, success_status
@@ -1375,8 +1421,11 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
             for j, subsection in enumerate(section.get('subsections', []), 1):
                 doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
         
-        # Section 4: Generated Article
-        doc.add_heading('Generated Article with Internal Links', level=1)
+        # Section 4: Generated Article or Guidance
+        if guidance_only:
+            doc.add_heading('Content Writing Guidance', level=1)
+        else:
+            doc.add_heading('Generated Article with Internal Links', level=1)
         
         # Parse HTML content and add to document, preserving links
         soup = BeautifulSoup(article_content, 'html.parser')
@@ -1668,25 +1717,41 @@ def main():
         if 'semantic_structure' not in st.session_state.results:
             st.warning("Please complete content analysis first (in the 'Content Analysis' tab)")
         else:
-            if st.button("Generate Article and Meta Tags"):
+            # Add option for guidance-only mode
+            content_type = st.radio(
+                "Content Generation Type:",
+                ["Full Article", "Writing Guidance Only"],
+                help="Choose 'Full Article' for complete content or 'Writing Guidance Only' for section-by-section writing directions"
+            )
+            guidance_only = (content_type == "Writing Guidance Only")
+            
+            if st.button("Generate " + ("Content Guidance" if guidance_only else "Article") + " and Meta Tags"):
                 if not openai_api_key:
                     st.error("Please enter OpenAI API key")
                 else:
-                    with st.spinner("Generating article and meta tags..."):
+                    with st.spinner("Generating " + ("content guidance" if guidance_only else "article") + " and meta tags..."):
                         start_time = time.time()
                         
-                        # Generate article (updated to include PAA questions)
+                        # Generate article or guidance (with guidance_only parameter)
                         article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
                             st.session_state.results.get('related_keywords', []),
                             st.session_state.results.get('serp_features', []),
                             st.session_state.results.get('paa_questions', []),
-                            openai_api_key
+                            openai_api_key,
+                            guidance_only
                         )
                         
                         if article_success and article_content:
-                            st.session_state.results['article_content'] = article_content
+                            # Store with special key for guidance
+                            if guidance_only:
+                                st.session_state.results['guidance_content'] = article_content
+                            else:
+                                st.session_state.results['article_content'] = article_content
+                            
+                            # Store the guidance flag
+                            st.session_state.results['guidance_only'] = guidance_only
                             
                             # Generate meta title and description
                             meta_title, meta_description, meta_success = generate_meta_tags(
@@ -1704,29 +1769,49 @@ def main():
                                 st.write(f"**Meta Title:** {meta_title}")
                                 st.write(f"**Meta Description:** {meta_description}")
                             
-                            st.subheader("Generated Article")
+                            st.subheader("Generated " + ("Content Guidance" if guidance_only else "Article"))
                             st.markdown(article_content, unsafe_allow_html=True)
                             
                             st.success(f"Content generation completed in {format_time(time.time() - start_time)}")
                         else:
-                            st.error("Failed to generate article. Please try again.")
+                            st.error("Failed to generate " + ("content guidance" if guidance_only else "article") + ". Please try again.")
             
-            # Show previously generated article if available
-            if 'article_content' in st.session_state.results:
+            # Show previously generated article or guidance if available
+            if 'article_content' in st.session_state.results or 'guidance_content' in st.session_state.results:
                 if 'meta_title' in st.session_state.results:
                     st.subheader("Previously Generated Meta Tags")
                     st.write(f"**Meta Title:** {st.session_state.results['meta_title']}")
                     st.write(f"**Meta Description:** {st.session_state.results['meta_description']}")
                 
-                st.subheader("Previously Generated Article")
-                st.markdown(st.session_state.results['article_content'], unsafe_allow_html=True)
+                # Display appropriate content based on what's available
+                if 'guidance_only' in st.session_state.results and st.session_state.results['guidance_only']:
+                    st.subheader("Previously Generated Content Guidance")
+                    if 'guidance_content' in st.session_state.results:
+                        st.markdown(st.session_state.results['guidance_content'], unsafe_allow_html=True)
+                else:
+                    st.subheader("Previously Generated Article")
+                    if 'article_content' in st.session_state.results:
+                        st.markdown(st.session_state.results['article_content'], unsafe_allow_html=True)
     
     # Tab 4: Internal Linking
     with tabs[3]:
         st.header("Internal Linking")
         
-        if 'article_content' not in st.session_state.results:
-            st.warning("Please generate an article first (in the 'Article Generation' tab)")
+        is_guidance_only = st.session_state.results.get('guidance_only', False)
+        
+        # Check if content exists and determine which type
+        has_content = False
+        if is_guidance_only and 'guidance_content' in st.session_state.results:
+            has_content = True
+            content_type = "guidance"
+        elif not is_guidance_only and 'article_content' in st.session_state.results:
+            has_content = True
+            content_type = "article"
+        
+        if not has_content:
+            st.warning("Please generate content first (in the 'Article Generation' tab)")
+        elif is_guidance_only:
+            st.warning("Internal linking is only available for full articles, not writing guidance")
         else:
             st.write("Upload a spreadsheet with your site pages (CSV or Excel):")
             st.write("The spreadsheet must contain columns: URL, Title, Meta Description")
@@ -1824,18 +1909,39 @@ def main():
     with tabs[4]:
         st.header("SEO Brief & Downloadable Report")
         
-        if 'article_content' not in st.session_state.results:
-            st.warning("Please generate an article first (in the 'Article Generation' tab)")
+        # Check if content exists and determine which type
+        has_content = False
+        content_type = "none"
+        
+        if 'guidance_only' in st.session_state.results:
+            is_guidance = st.session_state.results['guidance_only']
+            if is_guidance and 'guidance_content' in st.session_state.results:
+                has_content = True
+                content_type = "guidance"
+            elif not is_guidance and 'article_content' in st.session_state.results:
+                has_content = True
+                content_type = "article"
+        
+        if not has_content:
+            st.warning("Please generate content first (in the 'Article Generation' tab)")
         else:
             if st.button("Generate SEO Brief"):
                 with st.spinner("Generating SEO brief..."):
                     start_time = time.time()
                     
-                    # Use article with internal links if available, otherwise use regular article
-                    article_content = st.session_state.results.get('article_with_links', 
-                                                                 st.session_state.results['article_content'])
-                    
-                    internal_links = st.session_state.results.get('internal_links', None)
+                    # Determine which content to use
+                    if content_type == "article":
+                        # Use article with internal links if available, otherwise use regular article
+                        article_content = st.session_state.results.get('article_with_links', 
+                                                                      st.session_state.results['article_content'])
+                        
+                        internal_links = st.session_state.results.get('internal_links', None)
+                        guidance_only = False
+                    else:
+                        # Use guidance content
+                        article_content = st.session_state.results['guidance_content']
+                        internal_links = None
+                        guidance_only = True
                     
                     # Get meta title and description
                     meta_title = st.session_state.results.get('meta_title', 
@@ -1847,7 +1953,7 @@ def main():
                     # Get PAA questions
                     paa_questions = st.session_state.results.get('paa_questions', [])
                     
-                    # Create Word document (updated to include PAA questions)
+                    # Create Word document (updated with guidance_only parameter)
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
                         st.session_state.results['organic_results'],
@@ -1857,7 +1963,8 @@ def main():
                         meta_title,
                         meta_description,
                         paa_questions,
-                        internal_links
+                        internal_links,
+                        guidance_only
                     )
                     
                     if doc_success:
@@ -1887,7 +1994,7 @@ def main():
                 ("Content Analysis", 'scraped_contents' in st.session_state.results),
                 ("Semantic Structure", 'semantic_structure' in st.session_state.results),
                 ("Meta Title & Description", 'meta_title' in st.session_state.results),
-                ("Generated Article", 'article_content' in st.session_state.results),
+                ("Generated Content", 'article_content' in st.session_state.results or 'guidance_content' in st.session_state.results),
                 ("Internal Linking", 'article_with_links' in st.session_state.results)
             ]
             
