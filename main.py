@@ -1589,7 +1589,7 @@ def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
 def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
                         openai_api_key: str, keyword: str) -> Tuple[Dict, bool]:
     """
-    Analyze gaps between existing content and competitor content
+    Analyze gaps between existing content and competitor content with semantic relevancy analysis
     Returns: content_gaps, success_status
     """
     try:
@@ -1619,11 +1619,11 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         if len(competitor_text) > 12000:
             competitor_text = competitor_text[:12000]
         
-        # Use OpenAI to analyze content gaps
+        # Use OpenAI to analyze content gaps with improved prompting for insertion positions and semantic relevancy
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert SEO content analyst specializing in identifying content gaps."},
+                {"role": "system", "content": "You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues."},
                 {"role": "user", "content": f"""
                 Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
                 
@@ -1644,11 +1644,17 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                 2. Existing headings that should be revised/renamed
                 3. Key topics/points covered by competitors but missing in the existing content
                 4. Content areas that need expansion
+                5. SEMANTIC RELEVANCY ISSUES: Analyze if the content is too broadly focused instead of targeting the specific keyword "{keyword}". Identify sections that need to be refocused.
                 
                 Format your response as JSON:
                 {{
                     "missing_headings": [
-                        {{ "heading": "Heading Text", "level": 2, "suggested_content": "Brief description of what this section should cover" }}
+                        {{ 
+                            "heading": "Heading Text", 
+                            "level": 2, 
+                            "suggested_content": "Brief description of what this section should cover",
+                            "insert_after": "Name of existing heading to insert after or 'START' for beginning or 'END' for end"
+                        }}
                     ],
                     "revised_headings": [
                         {{ "original": "Original Heading", "suggested": "Improved Heading", "reason": "Reason for change" }}
@@ -1658,6 +1664,13 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                     ],
                     "expansion_areas": [
                         {{ "section": "Section Name", "reason": "Why this needs expansion", "suggested_content": "Additional content to include" }}
+                    ],
+                    "semantic_relevancy_issues": [
+                        {{ 
+                            "section": "Section that's off-target", 
+                            "issue": "Description of how the content is too broad or off-target", 
+                            "recommendation": "How to refocus the content on the keyword '{keyword}'"
+                        }}
                     ]
                 }}
                 """}
@@ -1683,7 +1696,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
 
 def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str) -> Tuple[BytesIO, bool]:
     """
-    Create a new Word document with content updates highlighted in red
+    Create a new Word document with content updates highlighted in red and integrated at appropriate locations
     Returns: document_stream, success_status
     """
     try:
@@ -1718,6 +1731,12 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 # Add heading text in red
                 heading_text = heading_para.add_run(heading.get('heading', ''))
                 heading_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Show insertion position
+                insert_after = heading.get('insert_after', 'END')
+                pos_para = doc.add_paragraph('')
+                pos_text = pos_para.add_run(f"Suggested position: After '{insert_after}'")
+                pos_text.italic = True
                 
                 # Add suggested content
                 if heading.get('suggested_content'):
@@ -1784,12 +1803,27 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                     content_text = content_para.add_run(area.get('suggested_content', ''))
                     content_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
         
+        # NEW Section: Semantic Relevancy Issues
+        if content_gaps.get('semantic_relevancy_issues'):
+            doc.add_heading('Semantic Relevancy Issues', 1)
+            doc.add_paragraph(f"The following sections need to be better focused on the target keyword: '{keyword}'")
+            
+            for issue in content_gaps.get('semantic_relevancy_issues', []):
+                section_para = doc.add_heading(issue.get('section', ''), level=3)
+                
+                # Issue description
+                issue_para = doc.add_paragraph('Issue: ', style='List Bullet')
+                issue_para.add_run(issue.get('issue', ''))
+                
+                # Recommendation
+                if issue.get('recommendation'):
+                    rec_para = doc.add_paragraph('Recommendation: ', style='List Bullet')
+                    rec_text = rec_para.add_run(issue.get('recommendation', ''))
+                    rec_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        
         # Section 6: Updated Full Document
         doc.add_heading('Proposed Updated Content', 1)
         doc.add_paragraph("Below is the proposed content structure with updates incorporated:")
-        
-        # Add existing headings, updating as needed
-        existing_headings = existing_content.get('headings', [])
         
         # Create a mapping of original headings to revised headings
         revisions_map = {}
@@ -1799,7 +1833,29 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
             if original and suggested:
                 revisions_map[original] = suggested
         
-        # Add existing headings with revisions
+        # Organize missing headings by insertion position
+        headings_to_insert = {}
+        for heading in content_gaps.get('missing_headings', []):
+            insert_after = heading.get('insert_after', 'END')
+            if insert_after not in headings_to_insert:
+                headings_to_insert[insert_after] = []
+            headings_to_insert[insert_after].append(heading)
+        
+        # Insert headings marked for START
+        if 'START' in headings_to_insert:
+            for heading in headings_to_insert['START']:
+                level = heading.get('level', 2)
+                heading_para = doc.add_heading('', level=level)
+                heading_text = heading_para.add_run(heading.get('heading', ''))
+                heading_text.font.color.rgb = RGBColor(255, 0, 0)
+                
+                if heading.get('suggested_content'):
+                    content_para = doc.add_paragraph()
+                    content_text = content_para.add_run(heading.get('suggested_content', ''))
+                    content_text.font.color.rgb = RGBColor(255, 0, 0)
+        
+        # Add existing headings with revisions and insertions
+        existing_headings = existing_content.get('headings', [])
         for heading in existing_headings:
             heading_text = heading.get('text', '')
             level = heading.get('level', 2)
@@ -1822,20 +1878,28 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
             # Add paragraphs for this heading
             for para_text in heading.get('paragraphs', []):
                 doc.add_paragraph(para_text)
+            
+            # Insert new headings that should follow this one
+            if heading_text in headings_to_insert:
+                for new_heading in headings_to_insert[heading_text]:
+                    level = new_heading.get('level', 2)
+                    new_para = doc.add_heading('', level=level)
+                    new_text = new_para.add_run(new_heading.get('heading', ''))
+                    new_text.font.color.rgb = RGBColor(255, 0, 0)
+                    
+                    if new_heading.get('suggested_content'):
+                        content_para = doc.add_paragraph()
+                        content_text = content_para.add_run(new_heading.get('suggested_content', ''))
+                        content_text.font.color.rgb = RGBColor(255, 0, 0)
         
-        # Add missing headings at the end
-        if content_gaps.get('missing_headings'):
-            doc.add_heading('Recommended Additional Sections', 2)
-            for heading in content_gaps['missing_headings']:
-                # Add heading with level
+        # Insert headings marked for END
+        if 'END' in headings_to_insert:
+            for heading in headings_to_insert['END']:
                 level = heading.get('level', 2)
                 heading_para = doc.add_heading('', level=level)
-                
-                # Add heading text in red
                 heading_text = heading_para.add_run(heading.get('heading', ''))
                 heading_text.font.color.rgb = RGBColor(255, 0, 0)
                 
-                # Add suggested content
                 if heading.get('suggested_content'):
                     content_para = doc.add_paragraph()
                     content_text = content_para.add_run(heading.get('suggested_content', ''))
@@ -2396,33 +2460,42 @@ def main():
                                 if doc_success:
                                     st.session_state.results['updated_doc'] = updated_doc
                                     
-                                    # Display summary of recommendations
-                                    st.subheader("Content Update Recommendations")
-                                    
-                                    # Missing headings
-                                    if content_gaps.get('missing_headings'):
-                                        st.markdown("### Missing Sections")
-                                        for heading in content_gaps['missing_headings']:
-                                            st.markdown(f"**{heading.get('heading', '')}**")
-                                            st.markdown(f"*{heading.get('suggested_content', '')}*")
-                                    
-                                    # Revised headings
-                                    if content_gaps.get('revised_headings'):
-                                        st.markdown("### Heading Revisions")
-                                        for revision in content_gaps['revised_headings']:
-                                            st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
-                                    
-                                    # Content gaps
-                                    if content_gaps.get('content_gaps'):
-                                        st.markdown("### Content Gaps")
-                                        for gap in content_gaps['content_gaps']:
-                                            st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
-                                    
-                                    # Expansion areas
-                                    if content_gaps.get('expansion_areas'):
-                                        st.markdown("### Expansion Areas")
-                                        for area in content_gaps['expansion_areas']:
-                                            st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
+                                # Display summary of recommendations
+                                st.subheader("Content Update Recommendations")
+                                
+                                # Semantic relevancy issues (add this first - it's most important)
+                                if content_gaps.get('semantic_relevancy_issues'):
+                                    st.markdown("### Semantic Relevancy Issues")
+                                    for issue in content_gaps['semantic_relevancy_issues']:
+                                        st.markdown(f"**{issue.get('section', '')}**")
+                                        st.markdown(f"*Issue:* {issue.get('issue', '')}")
+                                        st.markdown(f"*Recommendation:* **<span style='color:red'>{issue.get('recommendation', '')}</span>**", unsafe_allow_html=True)
+                                
+                                # Missing headings
+                                if content_gaps.get('missing_headings'):
+                                    st.markdown("### Missing Sections")
+                                    for heading in content_gaps['missing_headings']:
+                                        st.markdown(f"**{heading.get('heading', '')}**")
+                                        st.markdown(f"*Insert after:* {heading.get('insert_after', 'END')}")
+                                        st.markdown(f"*{heading.get('suggested_content', '')}*")
+                                
+                                # Revised headings
+                                if content_gaps.get('revised_headings'):
+                                    st.markdown("### Heading Revisions")
+                                    for revision in content_gaps['revised_headings']:
+                                        st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
+                                
+                                # Content gaps
+                                if content_gaps.get('content_gaps'):
+                                    st.markdown("### Content Gaps")
+                                    for gap in content_gaps['content_gaps']:
+                                        st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
+                                
+                                # Expansion areas
+                                if content_gaps.get('expansion_areas'):
+                                    st.markdown("### Expansion Areas")
+                                    for area in content_gaps['expansion_areas']:
+                                        st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
                                     
                                     # Download button
                                     st.download_button(
