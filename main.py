@@ -1715,7 +1715,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
 
 def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str) -> Tuple[BytesIO, bool]:
     """
-    Create a new Word document with content updates highlighted in red and fully integrated
+    Create a new Word document with clear recommendations for content improvements
     Returns: document_stream, success_status
     """
     try:
@@ -1727,277 +1727,204 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         # Add date
         doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Section 1: Executive Summary
+        # Executive Summary
         doc.add_heading('Executive Summary', 1)
         summary = doc.add_paragraph()
-        summary.add_run("This document contains recommended updates to improve the existing content based on competitor analysis. ")
-        summary.add_run("Additions and changes are marked in ").bold = True
-        red_text = summary.add_run("red")
-        red_text.font.color.rgb = RGBColor(255, 0, 0)
-        summary.add_run(", and suggested removals are marked with ").bold = True
-        strike_text = summary.add_run("strikethrough")
-        strike_text.font.strike = True
-        summary.add_run(".")
+        summary.add_run(f"This document contains recommended updates to improve your content for the target keyword '{keyword}'. ")
+        summary.add_run("Based on competitor analysis and search trends, we recommend the following improvements:")
         
-        # Section 2: Missing Headings
-        if content_gaps.get('missing_headings'):
-            doc.add_heading('Recommended New Sections', 1)
-            for heading in content_gaps['missing_headings']:
-                # Add heading with level
-                level = heading.get('level', 2)
-                heading_para = doc.add_heading('', level=level)
-                
-                # Add heading text in red
-                heading_text = heading_para.add_run(heading.get('heading', ''))
-                heading_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                
-                # Show insertion position
-                insert_after = heading.get('insert_after', 'END')
-                pos_para = doc.add_paragraph('')
-                pos_text = pos_para.add_run(f"Suggested position: After '{insert_after}'")
-                pos_text.italic = True
-                
-                # Add suggested content
-                if heading.get('suggested_content'):
-                    content_para = doc.add_paragraph()
-                    content_text = content_para.add_run(heading.get('suggested_content', ''))
-                    content_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-        
-        # Section 3: Heading Revisions
-        if content_gaps.get('revised_headings'):
-            doc.add_heading('Recommended Heading Revisions', 1)
-            for revision in content_gaps['revised_headings']:
-                para = doc.add_paragraph()
-                
-                # Original heading with strikethrough
-                original = para.add_run(revision.get('original', ''))
-                original.font.strike = True
-                
-                para.add_run(' → ')
-                
-                # Suggested heading in red
-                suggested = para.add_run(revision.get('suggested', ''))
-                suggested.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                
-                # Reason for change
-                if revision.get('reason'):
-                    reason_para = doc.add_paragraph('Reason: ', style='List Bullet')
-                    reason_para.add_run(revision.get('reason', ''))
-        
-        # Section 4: Content Gaps
-        if content_gaps.get('content_gaps'):
-            doc.add_heading('Key Content Gaps to Address', 1)
-            for gap in content_gaps['content_gaps']:
-                # Topic heading
-                topic_para = doc.add_heading(gap.get('topic', ''), level=3)
-                topic_text = topic_para.runs[0]
-                topic_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                
-                # Details about the gap
-                if gap.get('details'):
-                    details_para = doc.add_paragraph('Gap: ', style='List Bullet')
-                    details_para.add_run(gap.get('details', ''))
-                
-                # Suggested content addition
-                if gap.get('suggested_content'):
-                    suggest_para = doc.add_paragraph('Suggested Addition: ', style='List Bullet')
-                    suggested_text = suggest_para.add_run(gap.get('suggested_content', ''))
-                    suggested_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-        
-        # Section 5: Areas for Expansion
-        if content_gaps.get('expansion_areas'):
-            doc.add_heading('Areas Needing Expansion', 1)
-            for area in content_gaps['expansion_areas']:
-                # Section name
-                section_para = doc.add_heading(area.get('section', ''), level=3)
-                
-                # Reason for expansion
-                if area.get('reason'):
-                    reason_para = doc.add_paragraph('Reason: ', style='List Bullet')
-                    reason_para.add_run(area.get('reason', ''))
-                
-                # Suggested additional content
-                if area.get('suggested_content'):
-                    content_para = doc.add_paragraph('Suggested Addition: ', style='List Bullet')
-                    content_text = content_para.add_run(area.get('suggested_content', ''))
-                    content_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-        
-        # Section 6: Semantic Relevancy Issues
+        # Add bullet points summarizing key recommendations
+        recommendations = []
         if content_gaps.get('semantic_relevancy_issues'):
-            doc.add_heading('Semantic Relevancy Issues', 1)
-            doc.add_paragraph(f"The following sections need to be better focused on the target keyword: '{keyword}'")
+            recommendations.append("Improve semantic relevancy to better target the keyword")
+        if content_gaps.get('missing_headings'):
+            recommendations.append(f"Add {len(content_gaps.get('missing_headings', []))} new sections")
+        if content_gaps.get('revised_headings'):
+            recommendations.append(f"Revise {len(content_gaps.get('revised_headings', []))} existing headings")
+        if content_gaps.get('content_gaps'):
+            recommendations.append(f"Address {len(content_gaps.get('content_gaps', []))} content gaps")
+        if content_gaps.get('expansion_areas'):
+            recommendations.append(f"Expand {len(content_gaps.get('expansion_areas', []))} sections")
+        if content_gaps.get('unanswered_questions'):
+            recommendations.append(f"Address {len(content_gaps.get('unanswered_questions', []))} 'People Also Asked' questions")
+        
+        for rec in recommendations:
+            rec_para = doc.add_paragraph(rec, style='List Bullet')
+        
+        # 1. Semantic Relevancy Issues Section
+        if content_gaps.get('semantic_relevancy_issues'):
+            doc.add_heading('Semantic Relevancy Recommendations', 1)
+            
+            explanation = doc.add_paragraph()
+            explanation.add_run(f"Your content appears to be focused more broadly than the target keyword '{keyword}'. ")
+            explanation.add_run("The following recommendations will help align your content more closely with search intent:")
             
             for issue in content_gaps.get('semantic_relevancy_issues', []):
-                section_para = doc.add_heading(issue.get('section', ''), level=3)
+                section = issue.get('section', '')
+                doc.add_heading(section, 2)
                 
-                # Issue description
-                issue_para = doc.add_paragraph('Issue: ', style='List Bullet')
+                issue_para = doc.add_paragraph()
+                issue_para.add_run("Issue: ").bold = True
                 issue_para.add_run(issue.get('issue', ''))
                 
-                # Recommendation
-                if issue.get('recommendation'):
-                    rec_para = doc.add_paragraph('Recommendation: ', style='List Bullet')
-                    rec_text = rec_para.add_run(issue.get('recommendation', ''))
-                    rec_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                rec_para = doc.add_paragraph()
+                rec_para.add_run("Recommendation: ").bold = True
+                rec_text = rec_para.add_run(issue.get('recommendation', ''))
+                rec_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                doc.add_paragraph()  # Add spacing
         
-        # Section 7: Unanswered PAA Questions
+        # 2. Content Structure Recommendations
+        doc.add_heading('Content Structure Recommendations', 1)
+        
+        # a. Heading Revisions
+        if content_gaps.get('revised_headings'):
+            doc.add_heading('Heading Revisions', 2)
+            heading_intro = doc.add_paragraph()
+            heading_intro.add_run("The following heading changes will improve your content's focus and SEO performance:")
+            
+            table = doc.add_table(rows=1, cols=3)
+            table.style = 'Table Grid'
+            
+            # Add header row
+            header_cells = table.rows[0].cells
+            header_cells[0].text = 'Current Heading'
+            header_cells[1].text = 'Recommended Heading'
+            header_cells[2].text = 'Rationale'
+            
+            for revision in content_gaps.get('revised_headings', []):
+                row_cells = table.add_row().cells
+                
+                # Current heading
+                row_cells[0].text = revision.get('original', '')
+                
+                # Recommended heading in red
+                recommended_heading = row_cells[1].paragraphs[0].add_run(revision.get('suggested', ''))
+                recommended_heading.font.color.rgb = RGBColor(255, 0, 0)
+                
+                # Rationale
+                row_cells[2].text = revision.get('reason', '')
+            
+            doc.add_paragraph()  # Add spacing
+            
+        # b. New Sections to Add
+        if content_gaps.get('missing_headings'):
+            doc.add_heading('Recommended New Sections', 2)
+            
+            sections_intro = doc.add_paragraph()
+            sections_intro.add_run("Add the following sections to make your content more comprehensive:")
+            
+            for heading in content_gaps.get('missing_headings', []):
+                heading_level = heading.get('level', 2)
+                heading_text = heading.get('heading', '')
+                
+                # Make H3 or H4 for better document structure
+                actual_level = min(heading_level + 1, 3)
+                heading_para = doc.add_heading(heading_text, level=actual_level)
+                heading_para.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Where to insert
+                position_para = doc.add_paragraph()
+                position_para.add_run("Placement: ").bold = True
+                position_para.add_run(f"After '{heading.get('insert_after', 'END')}' section")
+                
+                # Content suggestion
+                if heading.get('suggested_content'):
+                    content_para = doc.add_paragraph()
+                    content_para.add_run("Content to include: ").bold = True
+                    content_para.add_run(heading.get('suggested_content', ''))
+                
+                doc.add_paragraph()  # Add spacing
+        
+        # 3. Content Gap Recommendations
+        if content_gaps.get('content_gaps') or content_gaps.get('expansion_areas'):
+            doc.add_heading('Content Gap Recommendations', 1)
+            
+            # a. Missing Topics
+            if content_gaps.get('content_gaps'):
+                doc.add_heading('Key Topics to Add', 2)
+                
+                topics_intro = doc.add_paragraph()
+                topics_intro.add_run("The following topics are covered by competitors but missing in your content:")
+                
+                for gap in content_gaps.get('content_gaps', []):
+                    topic_heading = doc.add_heading(gap.get('topic', ''), 3)
+                    topic_heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                    
+                    issue_para = doc.add_paragraph()
+                    issue_para.add_run("Gap: ").bold = True
+                    issue_para.add_run(gap.get('details', ''))
+                    
+                    if gap.get('suggested_content'):
+                        content_para = doc.add_paragraph()
+                        content_para.add_run("Suggested Content: ").bold = True
+                        content_para.add_run(gap.get('suggested_content', ''))
+                    
+                    doc.add_paragraph()  # Add spacing
+            
+            # b. Areas to Expand
+            if content_gaps.get('expansion_areas'):
+                doc.add_heading('Areas to Expand', 2)
+                
+                expansion_intro = doc.add_paragraph()
+                expansion_intro.add_run("Enhance the following sections with additional content:")
+                
+                for area in content_gaps.get('expansion_areas', []):
+                    area_heading = doc.add_heading(area.get('section', ''), 3)
+                    
+                    reason_para = doc.add_paragraph()
+                    reason_para.add_run("Reason for expansion: ").bold = True
+                    reason_para.add_run(area.get('reason', ''))
+                    
+                    if area.get('suggested_content'):
+                        content_para = doc.add_paragraph()
+                        content_para.add_run("Content to add: ").bold = True
+                        content_para.add_run(area.get('suggested_content', ''))
+                    
+                    doc.add_paragraph()  # Add spacing
+        
+        # 4. People Also Asked Recommendations
         if content_gaps.get('unanswered_questions'):
-            doc.add_heading('Unanswered "People Also Asked" Questions', 1)
-            doc.add_paragraph("The following questions from search results are not adequately addressed in the content:")
+            doc.add_heading('People Also Asked Questions to Address', 1)
+            
+            paa_intro = doc.add_paragraph()
+            paa_intro.add_run("Incorporate answers to these common questions to improve your content's search relevance:")
             
             for question in content_gaps.get('unanswered_questions', []):
                 q_para = doc.add_paragraph()
-                q_text = q_para.add_run(f"Question: {question.get('question', '')}")
-                q_text.bold = True
+                q_para.add_run("Question: ").bold = True
+                q_text = q_para.add_run(question.get('question', ''))
+                q_text.italic = True
                 
                 if question.get('insert_into_section'):
-                    section_para = doc.add_paragraph('Recommended section: ', style='List Bullet')
+                    section_para = doc.add_paragraph()
+                    section_para.add_run("Recommended section: ").bold = True
                     section_para.add_run(question.get('insert_into_section', ''))
                 
                 if question.get('suggested_answer'):
-                    ans_para = doc.add_paragraph('Suggested Answer: ', style='List Bullet')
-                    ans_text = ans_para.add_run(question.get('suggested_answer', ''))
-                    ans_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
-        
-        # Section 8: Updated Full Document with fully integrated changes
-        doc.add_heading('Proposed Updated Content', 1)
-        doc.add_paragraph("Below is the proposed content structure with updates fully integrated:")
-        
-        # Create necessary mappings for better integration
-        revisions_map = {revision.get('original', ''): revision.get('suggested', '') 
-                        for revision in content_gaps.get('revised_headings', [])}
-        
-        # Organize all additions by location
-        additions_by_location = {}
-        
-        # Organize missing headings by insertion position
-        for heading in content_gaps.get('missing_headings', []):
-            insert_after = heading.get('insert_after', 'END')
-            if insert_after not in additions_by_location:
-                additions_by_location[insert_after] = {'headings': []}
-            elif 'headings' not in additions_by_location[insert_after]:
-                additions_by_location[insert_after]['headings'] = []
-            additions_by_location[insert_after]['headings'].append(heading)
-        
-        # Organize unanswered questions by section
-        for question in content_gaps.get('unanswered_questions', []):
-            section = question.get('insert_into_section', 'END')
-            if section not in additions_by_location:
-                additions_by_location[section] = {'questions': []}
-            elif 'questions' not in additions_by_location[section]:
-                additions_by_location[section]['questions'] = []
-            additions_by_location[section]['questions'].append(question)
-        
-        # Insert headings marked for START
-        if 'START' in additions_by_location:
-            if 'headings' in additions_by_location['START']:
-                for heading in additions_by_location['START']['headings']:
-                    level = heading.get('level', 2)
-                    heading_para = doc.add_heading('', level=level)
-                    heading_text = heading_para.add_run(heading.get('heading', ''))
-                    heading_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if heading.get('suggested_content'):
-                        content_para = doc.add_paragraph()
-                        content_text = content_para.add_run(heading.get('suggested_content', ''))
-                        content_text.font.color.rgb = RGBColor(255, 0, 0)
-            
-            # Add START questions
-            if 'questions' in additions_by_location['START']:
-                for question in additions_by_location['START']['questions']:
-                    q_para = doc.add_paragraph()
-                    q_text = q_para.add_run(f"Q: {question.get('question', '')}")
-                    q_text.bold = True
-                    q_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if question.get('suggested_answer'):
-                        a_para = doc.add_paragraph()
-                        a_text = a_para.add_run(f"A: {question.get('suggested_answer', '')}")
-                        a_text.font.color.rgb = RGBColor(255, 0, 0)
-        
-        # Process existing headings with fully integrated additions
-        existing_headings = existing_content.get('headings', [])
-        for heading in existing_headings:
-            heading_text = heading.get('text', '')
-            level = heading.get('level', 2)
-            
-            # Create the heading with potential revision
-            heading_para = doc.add_heading('', level=level)
-            
-            if heading_text in revisions_map:
-                # Add strikethrough for original
-                original = heading_para.add_run(heading_text)
-                original.font.strike = True
+                    answer_para = doc.add_paragraph()
+                    answer_para.add_run("Suggested answer: ").bold = True
+                    answer_para.add_run(question.get('suggested_answer', ''))
                 
-                heading_para.add_run(' → ')
+                doc.add_paragraph()  # Add spacing
                 
-                # Add suggested in red
-                suggested = heading_para.add_run(revisions_map[heading_text])
-                suggested.font.color.rgb = RGBColor(255, 0, 0)
-                
-                # Update heading_text for later reference to match the key in additions_by_location
-                revised_text = revisions_map[heading_text]
-            else:
-                heading_para.add_run(heading_text)
-                revised_text = heading_text
-            
-            # Add paragraphs for this heading
-            for para_text in heading.get('paragraphs', []):
-                doc.add_paragraph(para_text)
-            
-            # Add PAA questions that should be inserted into this section
-            if heading_text in additions_by_location and 'questions' in additions_by_location[heading_text]:
-                for question in additions_by_location[heading_text]['questions']:
-                    q_para = doc.add_paragraph()
-                    q_text = q_para.add_run(f"Q: {question.get('question', '')}")
-                    q_text.bold = True
-                    q_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if question.get('suggested_answer'):
-                        a_para = doc.add_paragraph()
-                        a_text = a_para.add_run(f"A: {question.get('suggested_answer', '')}")
-                        a_text.font.color.rgb = RGBColor(255, 0, 0)
-            
-            # Insert new headings that should follow this heading - FULLY INTEGRATED
-            if heading_text in additions_by_location and 'headings' in additions_by_location[heading_text]:
-                for new_heading in additions_by_location[heading_text]['headings']:
-                    new_level = new_heading.get('level', 2)
-                    new_para = doc.add_heading('', level=new_level)
-                    new_text = new_para.add_run(new_heading.get('heading', ''))
-                    new_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if new_heading.get('suggested_content'):
-                        content_para = doc.add_paragraph()
-                        content_text = content_para.add_run(new_heading.get('suggested_content', ''))
-                        content_text.font.color.rgb = RGBColor(255, 0, 0)
+        # 5. Implementation Guide
+        doc.add_heading('Implementation Guide', 1)
         
-        # Insert headings and questions marked for END
-        if 'END' in additions_by_location:
-            # Add END headings
-            if 'headings' in additions_by_location['END']:
-                for heading in additions_by_location['END']['headings']:
-                    level = heading.get('level', 2)
-                    heading_para = doc.add_heading('', level=level)
-                    heading_text = heading_para.add_run(heading.get('heading', ''))
-                    heading_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if heading.get('suggested_content'):
-                        content_para = doc.add_paragraph()
-                        content_text = content_para.add_run(heading.get('suggested_content', ''))
-                        content_text.font.color.rgb = RGBColor(255, 0, 0)
-            
-            # Add END questions
-            if 'questions' in additions_by_location['END']:
-                for question in additions_by_location['END']['questions']:
-                    q_para = doc.add_paragraph()
-                    q_text = q_para.add_run(f"Q: {question.get('question', '')}")
-                    q_text.bold = True
-                    q_text.font.color.rgb = RGBColor(255, 0, 0)
-                    
-                    if question.get('suggested_answer'):
-                        a_para = doc.add_paragraph()
-                        a_text = a_para.add_run(f"A: {question.get('suggested_answer', '')}")
-                        a_text.font.color.rgb = RGBColor(255, 0, 0)
+        guide_para = doc.add_paragraph()
+        guide_para.add_run("To implement these recommendations effectively:").bold = True
+        
+        implementation_steps = [
+            "Start by addressing the semantic relevancy issues to align your content with the target keyword",
+            "Update headings to improve clarity and search relevance",
+            "Add missing sections in the recommended locations",
+            "Incorporate answers to 'People Also Asked' questions to address search intent",
+            "Expand thin areas with additional, valuable content",
+            "After making these changes, review the content as a whole to ensure natural flow and consistency"
+        ]
+        
+        for step in implementation_steps:
+            step_para = doc.add_paragraph(step, style='List Number')
         
         # Save document to memory stream
         doc_stream = BytesIO()
