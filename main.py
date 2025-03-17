@@ -1521,7 +1521,341 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         return BytesIO(), False
 
 ###############################################################################
-# 10. Main Streamlit App
+# 10. Content Update Functions
+###############################################################################
+
+def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
+    """
+    Parse uploaded Word document to extract content structure
+    Returns: document_content, success_status
+    """
+    try:
+        # Read the document
+        doc = Document(BytesIO(uploaded_file.getvalue()))
+        
+        # Extract content structure
+        document_content = {
+            'title': '',
+            'headings': [],
+            'paragraphs': [],
+            'full_text': ''
+        }
+        
+        # Extract text and maintain hierarchy
+        full_text = []
+        current_heading = None
+        
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+                
+            # Check if it's a heading
+            if para.style.name.startswith('Heading'):
+                heading_level = int(para.style.name.replace('Heading', '')) if para.style.name != 'Heading' else 1
+                current_heading = {
+                    'text': text,
+                    'level': heading_level,
+                    'paragraphs': []
+                }
+                document_content['headings'].append(current_heading)
+                
+                # If it's the title (first heading), save it
+                if heading_level == 1 and not document_content['title']:
+                    document_content['title'] = text
+            else:
+                # It's a paragraph
+                para_obj = {
+                    'text': text,
+                    'heading': current_heading['text'] if current_heading else None
+                }
+                document_content['paragraphs'].append(para_obj)
+                
+                # Add to current heading if available
+                if current_heading:
+                    current_heading['paragraphs'].append(text)
+                
+            full_text.append(text)
+        
+        document_content['full_text'] = '\n\n'.join(full_text)
+        
+        return document_content, True
+    except Exception as e:
+        error_msg = f"Exception in parse_word_document: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return {}, False
+
+def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
+                        openai_api_key: str, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Analyze gaps between existing content and competitor content
+    Returns: content_gaps, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Extract existing headings
+        existing_headings = [h['text'] for h in existing_content.get('headings', [])]
+        
+        # Extract recommended headings from semantic structure
+        recommended_headings = []
+        if 'h1' in semantic_structure:
+            recommended_headings.append(semantic_structure['h1'])
+        
+        for section in semantic_structure.get('sections', []):
+            if 'h2' in section:
+                recommended_headings.append(section['h2'])
+                for subsection in section.get('subsections', []):
+                    if 'h3' in subsection:
+                        recommended_headings.append(subsection['h3'])
+        
+        # Combine competitor content
+        competitor_text = ""
+        for content in competitor_contents:
+            competitor_text += content.get('content', '') + "\n\n"
+        
+        # Truncate if too long
+        if len(competitor_text) > 12000:
+            competitor_text = competitor_text[:12000]
+        
+        # Use OpenAI to analyze content gaps
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert SEO content analyst specializing in identifying content gaps."},
+                {"role": "user", "content": f"""
+                Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
+                
+                Existing Content Headings:
+                {json.dumps(existing_headings, indent=2)}
+                
+                Recommended Content Structure Based on Competitors:
+                {json.dumps(recommended_headings, indent=2)}
+                
+                Existing Content:
+                {existing_content.get('full_text', '')[:5000]}
+                
+                Competitor Content (Sample):
+                {competitor_text[:5000]}
+                
+                Identify:
+                1. Missing headings/sections that should be added
+                2. Existing headings that should be revised/renamed
+                3. Key topics/points covered by competitors but missing in the existing content
+                4. Content areas that need expansion
+                
+                Format your response as JSON:
+                {{
+                    "missing_headings": [
+                        {{ "heading": "Heading Text", "level": 2, "suggested_content": "Brief description of what this section should cover" }}
+                    ],
+                    "revised_headings": [
+                        {{ "original": "Original Heading", "suggested": "Improved Heading", "reason": "Reason for change" }}
+                    ],
+                    "content_gaps": [
+                        {{ "topic": "Topic Name", "details": "What's missing about this topic", "suggested_content": "Suggested content to add" }}
+                    ],
+                    "expansion_areas": [
+                        {{ "section": "Section Name", "reason": "Why this needs expansion", "suggested_content": "Additional content to include" }}
+                    ]
+                }}
+                """}
+            ],
+            temperature=0.4
+        )
+        
+        # Extract and parse JSON response
+        content = response.choices[0].message.content
+        # Find JSON content within response (in case there's additional text)
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        content_gaps = json.loads(content)
+        return content_gaps, True
+    
+    except Exception as e:
+        error_msg = f"Exception in analyze_content_gaps: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return {}, False
+
+def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str) -> Tuple[BytesIO, bool]:
+    """
+    Create a new Word document with content updates highlighted in red
+    Returns: document_stream, success_status
+    """
+    try:
+        doc = Document()
+        
+        # Add title
+        doc.add_heading(f'Content Update Recommendations: {keyword}', 0)
+        
+        # Add date
+        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Section 1: Executive Summary
+        doc.add_heading('Executive Summary', 1)
+        summary = doc.add_paragraph()
+        summary.add_run("This document contains recommended updates to improve the existing content based on competitor analysis. ")
+        summary.add_run("Additions and changes are marked in ").bold = True
+        red_text = summary.add_run("red")
+        red_text.font.color.rgb = RGBColor(255, 0, 0)
+        summary.add_run(", and suggested removals are marked with ").bold = True
+        strike_text = summary.add_run("strikethrough")
+        strike_text.font.strike = True
+        summary.add_run(".")
+        
+        # Section 2: Missing Headings
+        if content_gaps.get('missing_headings'):
+            doc.add_heading('Recommended New Sections', 1)
+            for heading in content_gaps['missing_headings']:
+                # Add heading with level
+                level = heading.get('level', 2)
+                heading_para = doc.add_heading('', level=level)
+                
+                # Add heading text in red
+                heading_text = heading_para.add_run(heading.get('heading', ''))
+                heading_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Add suggested content
+                if heading.get('suggested_content'):
+                    content_para = doc.add_paragraph()
+                    content_text = content_para.add_run(heading.get('suggested_content', ''))
+                    content_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        
+        # Section 3: Heading Revisions
+        if content_gaps.get('revised_headings'):
+            doc.add_heading('Recommended Heading Revisions', 1)
+            for revision in content_gaps['revised_headings']:
+                para = doc.add_paragraph()
+                
+                # Original heading with strikethrough
+                original = para.add_run(revision.get('original', ''))
+                original.font.strike = True
+                
+                para.add_run(' → ')
+                
+                # Suggested heading in red
+                suggested = para.add_run(revision.get('suggested', ''))
+                suggested.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Reason for change
+                if revision.get('reason'):
+                    reason_para = doc.add_paragraph('Reason: ', style='List Bullet')
+                    reason_para.add_run(revision.get('reason', ''))
+        
+        # Section 4: Content Gaps
+        if content_gaps.get('content_gaps'):
+            doc.add_heading('Key Content Gaps to Address', 1)
+            for gap in content_gaps['content_gaps']:
+                # Topic heading
+                topic_para = doc.add_heading(gap.get('topic', ''), level=3)
+                topic_text = topic_para.runs[0]
+                topic_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Details about the gap
+                if gap.get('details'):
+                    details_para = doc.add_paragraph('Gap: ', style='List Bullet')
+                    details_para.add_run(gap.get('details', ''))
+                
+                # Suggested content addition
+                if gap.get('suggested_content'):
+                    suggest_para = doc.add_paragraph('Suggested Addition: ', style='List Bullet')
+                    suggested_text = suggest_para.add_run(gap.get('suggested_content', ''))
+                    suggested_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        
+        # Section 5: Areas for Expansion
+        if content_gaps.get('expansion_areas'):
+            doc.add_heading('Areas Needing Expansion', 1)
+            for area in content_gaps['expansion_areas']:
+                # Section name
+                section_para = doc.add_heading(area.get('section', ''), level=3)
+                
+                # Reason for expansion
+                if area.get('reason'):
+                    reason_para = doc.add_paragraph('Reason: ', style='List Bullet')
+                    reason_para.add_run(area.get('reason', ''))
+                
+                # Suggested additional content
+                if area.get('suggested_content'):
+                    content_para = doc.add_paragraph('Suggested Addition: ', style='List Bullet')
+                    content_text = content_para.add_run(area.get('suggested_content', ''))
+                    content_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        
+        # Section 6: Updated Full Document
+        doc.add_heading('Proposed Updated Content', 1)
+        doc.add_paragraph("Below is the proposed content structure with updates incorporated:")
+        
+        # Add existing headings, updating as needed
+        existing_headings = existing_content.get('headings', [])
+        
+        # Create a mapping of original headings to revised headings
+        revisions_map = {}
+        for revision in content_gaps.get('revised_headings', []):
+            original = revision.get('original', '')
+            suggested = revision.get('suggested', '')
+            if original and suggested:
+                revisions_map[original] = suggested
+        
+        # Add existing headings with revisions
+        for heading in existing_headings:
+            heading_text = heading.get('text', '')
+            level = heading.get('level', 2)
+            
+            heading_para = doc.add_heading('', level=level)
+            
+            if heading_text in revisions_map:
+                # Add strikethrough for original
+                original = heading_para.add_run(heading_text)
+                original.font.strike = True
+                
+                heading_para.add_run(' → ')
+                
+                # Add suggested in red
+                suggested = heading_para.add_run(revisions_map[heading_text])
+                suggested.font.color.rgb = RGBColor(255, 0, 0)
+            else:
+                heading_para.add_run(heading_text)
+            
+            # Add paragraphs for this heading
+            for para_text in heading.get('paragraphs', []):
+                doc.add_paragraph(para_text)
+        
+        # Add missing headings at the end
+        if content_gaps.get('missing_headings'):
+            doc.add_heading('Recommended Additional Sections', 2)
+            for heading in content_gaps['missing_headings']:
+                # Add heading with level
+                level = heading.get('level', 2)
+                heading_para = doc.add_heading('', level=level)
+                
+                # Add heading text in red
+                heading_text = heading_para.add_run(heading.get('heading', ''))
+                heading_text.font.color.rgb = RGBColor(255, 0, 0)
+                
+                # Add suggested content
+                if heading.get('suggested_content'):
+                    content_para = doc.add_paragraph()
+                    content_text = content_para.add_run(heading.get('suggested_content', ''))
+                    content_text.font.color.rgb = RGBColor(255, 0, 0)
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream, True
+    
+    except Exception as e:
+        error_msg = f"Exception in create_updated_document: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return BytesIO(), False
+
+###############################################################################
+# 11. Main Streamlit App
 ###############################################################################
 
 def main():
@@ -1545,7 +1879,8 @@ def main():
         "Content Analysis", 
         "Article Generation", 
         "Internal Linking", 
-        "SEO Brief"
+        "SEO Brief",
+        "Content Updates"  # New tab
     ])
     
     # Tab 1: Input & SERP Analysis
@@ -2010,6 +2345,112 @@ def main():
                     file_name=f"seo_brief_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     key="download_brief_2"  # Added unique key
+                )
+    
+    # Tab 6: Content Updates (New Tab)
+    with tabs[5]:
+        st.header("Content Update Recommendations")
+        
+        if 'semantic_structure' not in st.session_state.results or 'scraped_contents' not in st.session_state.results:
+            st.warning("Please complete SERP and content analysis first (in the 'Input & SERP Analysis' and 'Content Analysis' tabs)")
+        else:
+            st.write("Upload your existing content document to get update recommendations based on competitor analysis:")
+            
+            # File uploader for document
+            content_file = st.file_uploader("Upload Content Document", type=['docx'])
+            
+            if st.button("Generate Update Recommendations"):
+                if not openai_api_key:
+                    st.error("Please enter OpenAI API key")
+                elif not content_file:
+                    st.error("Please upload a content document")
+                else:
+                    with st.spinner("Analyzing content and generating update recommendations..."):
+                        start_time = time.time()
+                        
+                        # Parse uploaded document
+                        existing_content, parse_success = parse_word_document(content_file)
+                        
+                        if parse_success and existing_content:
+                            # Analyze content gaps
+                            content_gaps, gap_success = analyze_content_gaps(
+                                existing_content,
+                                st.session_state.results['scraped_contents'],
+                                st.session_state.results['semantic_structure'],
+                                openai_api_key,
+                                st.session_state.results['keyword']
+                            )
+                            
+                            if gap_success and content_gaps:
+                                # Store results
+                                st.session_state.results['existing_content'] = existing_content
+                                st.session_state.results['content_gaps'] = content_gaps
+                                
+                                # Create updated document
+                                updated_doc, doc_success = create_updated_document(
+                                    existing_content,
+                                    content_gaps,
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if doc_success:
+                                    st.session_state.results['updated_doc'] = updated_doc
+                                    
+                                    # Display summary of recommendations
+                                    st.subheader("Content Update Recommendations")
+                                    
+                                    # Missing headings
+                                    if content_gaps.get('missing_headings'):
+                                        st.markdown("### Missing Sections")
+                                        for heading in content_gaps['missing_headings']:
+                                            st.markdown(f"**{heading.get('heading', '')}**")
+                                            st.markdown(f"*{heading.get('suggested_content', '')}*")
+                                    
+                                    # Revised headings
+                                    if content_gaps.get('revised_headings'):
+                                        st.markdown("### Heading Revisions")
+                                        for revision in content_gaps['revised_headings']:
+                                            st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
+                                    
+                                    # Content gaps
+                                    if content_gaps.get('content_gaps'):
+                                        st.markdown("### Content Gaps")
+                                        for gap in content_gaps['content_gaps']:
+                                            st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
+                                    
+                                    # Expansion areas
+                                    if content_gaps.get('expansion_areas'):
+                                        st.markdown("### Expansion Areas")
+                                        for area in content_gaps['expansion_areas']:
+                                            st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
+                                    
+                                    # Download button
+                                    st.download_button(
+                                        label="Download Update Recommendations",
+                                        data=updated_doc,
+                                        file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                    )
+                                    
+                                    st.success(f"Content update recommendations generated in {format_time(time.time() - start_time)}")
+                                else:
+                                    st.error("Failed to create updated document")
+                            else:
+                                st.error("Failed to analyze content gaps")
+                        else:
+                            st.error("Failed to parse uploaded document")
+            
+            # Show previously generated recommendations if available
+            if 'content_gaps' in st.session_state.results and 'updated_doc' in st.session_state.results:
+                st.subheader("Previously Generated Update Recommendations")
+                
+                # Download button for previously generated document
+                st.download_button(
+                    label="Download Previous Update Recommendations",
+                    data=st.session_state.results['updated_doc'],
+                    file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_previous_updates"  # Added unique key
                 )
 
 if __name__ == "__main__":
