@@ -1951,60 +1951,87 @@ def generate_optimized_article(existing_content: Dict, competitor_contents: List
     try:
         openai.api_key = openai_api_key
         
-        # Extract existing content with semantic analysis using embeddings
+        # Extract existing content and analyze its structure
         original_content = existing_content.get('full_text', '')
+        existing_headings = existing_content.get('headings', [])
         
-        # Extract recommended headings from semantic structure
-        recommended_structure = ""
-        if 'h1' in semantic_structure:
-            recommended_structure += f"H1: {semantic_structure['h1']}\n\n"
+        # Create a mapping of existing sections to new recommended structure
+        section_mapping_prompt = f"""
+        I need to restructure an article about "{keyword}" while preserving as much original content as possible.
         
-        for section in semantic_structure.get('sections', []):
-            if 'h2' in section:
-                recommended_structure += f"H2: {section['h2']}\n"
-                for subsection in section.get('subsections', []):
-                    if 'h3' in subsection:
-                        recommended_structure += f"  H3: {subsection['h3']}\n"
-                recommended_structure += "\n"
+        Original article headings:
+        {json.dumps([h.get('text', '') for h in existing_headings], indent=2)}
         
-        # Combine competitor content for reference (truncate if too long)
-        competitor_text = ""
-        for content in competitor_contents[:3]:  # Limit to top 3 competitors
-            competitor_text += content.get('content', '')[:3000] + "\n\n"
+        Recommended new structure:
+        {json.dumps(semantic_structure, indent=2)}
         
-        # Format PAA questions
-        paa_text = ""
-        if paa_questions:
-            paa_text = "People Also Asked Questions:\n"
-            for i, q in enumerate(paa_questions[:5], 1):  # Limit to top 5 PAA questions
-                paa_text += f"{i}. {q.get('question', '')}\n"
+        Create a mapping that shows where each section of original content should go in the new structure.
+        Format as JSON with original heading as key and target new heading as value.
+        """
         
-        # Format related keywords
-        related_kw_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10]])
+        # Get section mapping
+        mapping_response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert content restructuring assistant."},
+                {"role": "user", "content": section_mapping_prompt}
+            ],
+            temperature=0.2
+        )
         
-        # Generate combined content with improved semantic relevance
+        # Extract section mapping
+        mapping_content = mapping_response.choices[0].message.content
+        section_mapping = {}
+        try:
+            # Extract JSON if embedded in text
+            json_match = re.search(r'({.*})', mapping_content, re.DOTALL)
+            if json_match:
+                mapping_content = json_match.group(1)
+            section_mapping = json.loads(mapping_content)
+        except:
+            # Fallback if mapping fails
+            section_mapping = {}
+        
+        # Process content in chunks to handle longer documents
+        # Split original content into max 8000-char chunks to preserve more
+        content_chunks = [original_content[i:i+8000] for i in range(0, len(original_content), 8000)]
+        chunk_descriptions = []
+        
+        for i, chunk in enumerate(content_chunks):
+            chunk_desc = f"CONTENT CHUNK {i+1}: {chunk}"
+            chunk_descriptions.append(chunk_desc)
+        
+        chunks_text = "\n\n".join(chunk_descriptions[:3])  # Limit to first 3 chunks if very long
+        
+        # Generate optimized content with better preservation instructions
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are an expert SEO content optimizer specializing in semantic relevance."},
+                {"role": "system", "content": "You are an expert content preservation specialist who optimizes articles while maintaining original value."},
                 {"role": "user", "content": f"""
-                Create an optimized version of an article about "{keyword}" by:
+                Create an optimized version of an article about "{keyword}" by PRESERVING and restructuring existing content.
                 
-                1. Following this recommended semantic structure:
-                {recommended_structure}
+                IMPORTANT PRESERVATION INSTRUCTIONS:
+                1. This is NOT a rewrite task - this is a restructuring and enhancement task
+                2. Preserve all valuable, unique content from the original article
+                3. Only rewrite sections that are clearly off-topic or poorly written
+                4. Keep original examples, data points, and unique insights intact
+                5. Maintain the original tone and voice where possible
                 
-                2. Incorporating the best elements from the original content:
-                {original_content[:4000]}
+                Use this recommended semantic structure as your framework:
+                {json.dumps(semantic_structure, indent=2)}
                 
-                3. Using semantic elements from top-performing competitor content for inspiration:
-                {competitor_text[:4000]}
+                Content mapping (where original sections should go in new structure):
+                {json.dumps(section_mapping, indent=2)}
                 
-                4. Integrating answers to these "People Also Asked" questions naturally within the content:
-                {paa_text}
+                ORIGINAL CONTENT TO PRESERVE AND RESTRUCTURE:
+                {chunks_text}
                 
-                5. Include these related keywords where relevant: {related_kw_text}
-                
-                6. MOST IMPORTANTLY: Ensuring strong semantic relevance to the target keyword "{keyword}" throughout the entire article
+                Enhance the restructured content by:
+                1. Adding missing information from competitor content where relevant
+                2. Integrating answers to these PAA questions naturally: {paa_text}
+                3. Including these related keywords where they fit naturally: {related_kw_text}
+                4. Improving semantic relevance to the target keyword "{keyword}"
                 
                 Format the article with proper HTML:
                 - Main title in <h1> tags
@@ -2013,17 +2040,10 @@ def generate_optimized_article(existing_content: Dict, competitor_contents: List
                 - Paragraphs in <p> tags
                 - Use <ul>, <li> for bullet points
                 
-                Create a comprehensive, well-structured article that balances:
-                - Maintaining valuable unique insights from the original content
-                - Incorporating high-performing elements from competitors
-                - Strong semantic relevance to "{keyword}"
-                - Natural integration of PAA questions
-                - Logical flow between all sections
-                
-                The article should be 1,500-2,000 words and read like it was written by a single expert author.
+                The article should read cohesively while maximizing preservation of original content.
                 """}
             ],
-            temperature=0.4
+            temperature=0.3  # Lower temperature for more faithful preservation
         )
         
         optimized_content = response.choices[0].message.content
