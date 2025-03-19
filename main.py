@@ -1939,6 +1939,144 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         logger.error(traceback.format_exc())
         return BytesIO(), False
 
+def generate_optimized_article(existing_content: Dict, competitor_contents: List[Dict], 
+                              semantic_structure: Dict, related_keywords: List[Dict],
+                              keyword: str, paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
+    """
+    Generate a complete optimized article based on existing content and competitor analysis
+    using semantic embeddings for better relevance.
+    
+    Returns: optimized_html_content, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Extract existing content with semantic analysis using embeddings
+        original_content = existing_content.get('full_text', '')
+        
+        # Extract recommended headings from semantic structure
+        recommended_structure = ""
+        if 'h1' in semantic_structure:
+            recommended_structure += f"H1: {semantic_structure['h1']}\n\n"
+        
+        for section in semantic_structure.get('sections', []):
+            if 'h2' in section:
+                recommended_structure += f"H2: {section['h2']}\n"
+                for subsection in section.get('subsections', []):
+                    if 'h3' in subsection:
+                        recommended_structure += f"  H3: {subsection['h3']}\n"
+                recommended_structure += "\n"
+        
+        # Combine competitor content for reference (truncate if too long)
+        competitor_text = ""
+        for content in competitor_contents[:3]:  # Limit to top 3 competitors
+            competitor_text += content.get('content', '')[:3000] + "\n\n"
+        
+        # Format PAA questions
+        paa_text = ""
+        if paa_questions:
+            paa_text = "People Also Asked Questions:\n"
+            for i, q in enumerate(paa_questions[:5], 1):  # Limit to top 5 PAA questions
+                paa_text += f"{i}. {q.get('question', '')}\n"
+        
+        # Format related keywords
+        related_kw_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10]])
+        
+        # Generate combined content with improved semantic relevance
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert SEO content optimizer specializing in semantic relevance."},
+                {"role": "user", "content": f"""
+                Create an optimized version of an article about "{keyword}" by:
+                
+                1. Following this recommended semantic structure:
+                {recommended_structure}
+                
+                2. Incorporating the best elements from the original content:
+                {original_content[:4000]}
+                
+                3. Using semantic elements from top-performing competitor content for inspiration:
+                {competitor_text[:4000]}
+                
+                4. Integrating answers to these "People Also Asked" questions naturally within the content:
+                {paa_text}
+                
+                5. Include these related keywords where relevant: {related_kw_text}
+                
+                6. MOST IMPORTANTLY: Ensuring strong semantic relevance to the target keyword "{keyword}" throughout the entire article
+                
+                Format the article with proper HTML:
+                - Main title in <h1> tags
+                - Section headings in <h2> tags
+                - Subsection headings in <h3> tags
+                - Paragraphs in <p> tags
+                - Use <ul>, <li> for bullet points
+                
+                Create a comprehensive, well-structured article that balances:
+                - Maintaining valuable unique insights from the original content
+                - Incorporating high-performing elements from competitors
+                - Strong semantic relevance to "{keyword}"
+                - Natural integration of PAA questions
+                - Logical flow between all sections
+                
+                The article should be 1,500-2,000 words and read like it was written by a single expert author.
+                """}
+            ],
+            temperature=0.4
+        )
+        
+        optimized_content = response.choices[0].message.content
+        return optimized_content, True
+        
+    except Exception as e:
+        error_msg = f"Exception in generate_optimized_article: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return "", False
+
+def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
+    """
+    Create a Word document from HTML content
+    Returns: document_stream
+    """
+    try:
+        doc = Document()
+        
+        # Add document title
+        doc.add_heading(f'Optimized Content: {keyword}', 0)
+        
+        # Add date
+        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Parse HTML content and add to document
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
+            if element.name in ['h1', 'h2', 'h3']:
+                level = int(element.name[1])
+                doc.add_heading(element.get_text(), level=level)
+            elif element.name == 'p':
+                doc.add_paragraph(element.get_text())
+            elif element.name == 'ul':
+                for li in element.find_all('li'):
+                    doc.add_paragraph(li.get_text(), style='List Bullet')
+            elif element.name == 'ol':
+                for li in element.find_all('li'):
+                    doc.add_paragraph(li.get_text(), style='List Number')
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream
+    
+    except Exception as e:
+        error_msg = f"Exception in create_word_document_from_html: {str(e)}"
+        logger.error(error_msg)
+        return BytesIO()
+
 ###############################################################################
 # 11. Main Streamlit App
 ###############################################################################
@@ -2444,27 +2582,34 @@ def main():
             # File uploader for document
             content_file = st.file_uploader("Upload Content Document", type=['docx'])
             
-            if st.button("Generate Update Recommendations"):
+            if st.button("Generate Content Updates"):
                 if not openai_api_key:
                     st.error("Please enter OpenAI API key")
                 elif not content_file:
                     st.error("Please upload a content document")
                 else:
-                    with st.spinner("Analyzing content and generating update recommendations..."):
+                    # Add radio button for selecting update type
+                    update_type = st.radio(
+                        "Select update approach:",
+                        ["Recommendations Only", "Generate Optimized Article"],
+                        help="Choose whether to receive recommendations or get a completely optimized article"
+                    )
+                    
+                    with st.spinner("Analyzing content and generating updates..."):
                         start_time = time.time()
                         
                         # Parse uploaded document
                         existing_content, parse_success = parse_word_document(content_file)
                         
                         if parse_success and existing_content:
-                            # Analyze content gaps - now passing PAA questions
+                            # Common analysis regardless of approach
                             content_gaps, gap_success = analyze_content_gaps(
                                 existing_content,
                                 st.session_state.results['scraped_contents'],
                                 st.session_state.results['semantic_structure'],
                                 openai_api_key,
                                 st.session_state.results['keyword'],
-                                st.session_state.results.get('paa_questions', [])  # Pass PAA questions
+                                st.session_state.results.get('paa_questions', [])
                             )
                             
                             if gap_success and content_gaps:
@@ -2472,72 +2617,111 @@ def main():
                                 st.session_state.results['existing_content'] = existing_content
                                 st.session_state.results['content_gaps'] = content_gaps
                                 
-                                # Create updated document
-                                updated_doc, doc_success = create_updated_document(
-                                    existing_content,
-                                    content_gaps,
-                                    st.session_state.results['keyword']
-                                )
-                                
-                                if doc_success:
-                                    st.session_state.results['updated_doc'] = updated_doc
-                                    
-                                    # Display summary of recommendations
-                                    st.subheader("Content Update Recommendations")
-                                    
-                                    # Semantic relevancy issues (add this first - it's most important)
-                                    if content_gaps.get('semantic_relevancy_issues'):
-                                        st.markdown("### Semantic Relevancy Issues")
-                                        for issue in content_gaps['semantic_relevancy_issues']:
-                                            st.markdown(f"**{issue.get('section', '')}**")
-                                            st.markdown(f"*Issue:* {issue.get('issue', '')}")
-                                            st.markdown(f"*Recommendation:* **<span style='color:red'>{issue.get('recommendation', '')}</span>**", unsafe_allow_html=True)
-                                    
-                                    # Unanswered PAA questions
-                                    if content_gaps.get('unanswered_questions'):
-                                        st.markdown("### Unanswered 'People Also Asked' Questions")
-                                        for question in content_gaps['unanswered_questions']:
-                                            st.markdown(f"**Q: {question.get('question', '')}**")
-                                            st.markdown(f"*Section:* {question.get('insert_into_section', 'END')}")
-                                            st.markdown(f"*Suggested Answer:* **<span style='color:red'>{question.get('suggested_answer', '')}</span>**", unsafe_allow_html=True)
-                                    
-                                    # Missing headings
-                                    if content_gaps.get('missing_headings'):
-                                        st.markdown("### Missing Sections")
-                                        for heading in content_gaps['missing_headings']:
-                                            st.markdown(f"**{heading.get('heading', '')}**")
-                                            st.markdown(f"*Insert after:* {heading.get('insert_after', 'END')}")
-                                            st.markdown(f"*{heading.get('suggested_content', '')}*")
-                                    
-                                    # Revised headings
-                                    if content_gaps.get('revised_headings'):
-                                        st.markdown("### Heading Revisions")
-                                        for revision in content_gaps['revised_headings']:
-                                            st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
-                                    
-                                    # Content gaps
-                                    if content_gaps.get('content_gaps'):
-                                        st.markdown("### Content Gaps")
-                                        for gap in content_gaps['content_gaps']:
-                                            st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
-                                    
-                                    # Expansion areas
-                                    if content_gaps.get('expansion_areas'):
-                                        st.markdown("### Expansion Areas")
-                                        for area in content_gaps['expansion_areas']:
-                                            st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
-                                    
-                                    # Download button
-                                    st.download_button(
-                                        label="Download Update Recommendations",
-                                        data=updated_doc,
-                                        file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
-                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                if update_type == "Recommendations Only":
+                                    # Create updated document with recommendations (original approach)
+                                    updated_doc, doc_success = create_updated_document(
+                                        existing_content,
+                                        content_gaps,
+                                        st.session_state.results['keyword']
                                     )
                                     
-                                    st.success(f"Content update recommendations generated in {format_time(time.time() - start_time)}")
-                                else:
-                                    st.error("Failed to create updated document")
+                                    if doc_success:
+                                        st.session_state.results['updated_doc'] = updated_doc
+                                        
+                                        # Display summary of recommendations
+                                        st.subheader("Content Update Recommendations")
+                                        
+                                        # Semantic relevancy issues
+                                        if content_gaps.get('semantic_relevancy_issues'):
+                                            st.markdown("### Semantic Relevancy Issues")
+                                            for issue in content_gaps['semantic_relevancy_issues']:
+                                                st.markdown(f"**{issue.get('section', '')}**")
+                                                st.markdown(f"*Issue:* {issue.get('issue', '')}")
+                                                st.markdown(f"*Recommendation:* **<span style='color:red'>{issue.get('recommendation', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Unanswered PAA questions
+                                        if content_gaps.get('unanswered_questions'):
+                                            st.markdown("### Unanswered 'People Also Asked' Questions")
+                                            for question in content_gaps['unanswered_questions']:
+                                                st.markdown(f"**Q: {question.get('question', '')}**")
+                                                st.markdown(f"*Section:* {question.get('insert_into_section', 'END')}")
+                                                st.markdown(f"*Suggested Answer:* **<span style='color:red'>{question.get('suggested_answer', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Missing headings
+                                        if content_gaps.get('missing_headings'):
+                                            st.markdown("### Missing Sections")
+                                            for heading in content_gaps['missing_headings']:
+                                                st.markdown(f"**{heading.get('heading', '')}**")
+                                                st.markdown(f"*Insert after:* {heading.get('insert_after', 'END')}")
+                                                st.markdown(f"*{heading.get('suggested_content', '')}*")
+                                        
+                                        # Revised headings
+                                        if content_gaps.get('revised_headings'):
+                                            st.markdown("### Heading Revisions")
+                                            for revision in content_gaps['revised_headings']:
+                                                st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Content gaps
+                                        if content_gaps.get('content_gaps'):
+                                            st.markdown("### Content Gaps")
+                                            for gap in content_gaps['content_gaps']:
+                                                st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
+                                        
+                                        # Expansion areas
+                                        if content_gaps.get('expansion_areas'):
+                                            st.markdown("### Expansion Areas")
+                                            for area in content_gaps['expansion_areas']:
+                                                st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
+                                        
+                                        # Download button
+                                        st.download_button(
+                                            label="Download Update Recommendations",
+                                            data=updated_doc,
+                                            file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        )
+                                        
+                                        st.success(f"Content update recommendations generated in {format_time(time.time() - start_time)}")
+                                    else:
+                                        st.error("Failed to create updated document")
+                                
+                                else:  # Generate Optimized Article
+                                    # Generate optimized article
+                                    optimized_content, success = generate_optimized_article(
+                                        existing_content,
+                                        st.session_state.results['scraped_contents'],
+                                        st.session_state.results['semantic_structure'],
+                                        st.session_state.results.get('related_keywords', []),
+                                        st.session_state.results['keyword'],
+                                        st.session_state.results.get('paa_questions', []),
+                                        openai_api_key
+                                    )
+                                    
+                                    if success and optimized_content:
+                                        # Store the optimized content
+                                        st.session_state.results['optimized_content'] = optimized_content
+                                        
+                                        # Display the optimized content
+                                        st.markdown("## Optimized Article")
+                                        st.markdown(optimized_content, unsafe_allow_html=True)
+                                        
+                                        # Create Word document from HTML
+                                        doc_stream = create_word_document_from_html(
+                                            optimized_content, 
+                                            st.session_state.results['keyword']
+                                        )
+                                        
+                                        # Download button
+                                        st.download_button(
+                                            label="Download Optimized Article",
+                                            data=doc_stream,
+                                            file_name=f"optimized_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        )
+                                        
+                                        st.success(f"Optimized article generated in {format_time(time.time() - start_time)}")
+                                    else:
+                                        st.error("Failed to generate optimized article")
                             else:
                                 st.error("Failed to analyze content gaps")
                         else:
