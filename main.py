@@ -1939,131 +1939,206 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         logger.error(traceback.format_exc())
         return BytesIO(), False
 
-def generate_optimized_article(existing_content: Dict, competitor_contents: List[Dict], 
+def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
-                              keyword: str, paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
+                              keyword: str, paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, str, bool]:
     """
-    Generate a complete optimized article based on existing content and competitor analysis
-    using semantic embeddings for better relevance.
+    Generate a complete optimized article with change tracking to show modifications.
     
-    Returns: optimized_html_content, success_status
+    Returns: optimized_html_content, change_summary, success_status
     """
     try:
         openai.api_key = openai_api_key
         
-        # Extract existing content and analyze its structure
+        # Extract existing content structure more effectively
         original_content = existing_content.get('full_text', '')
         existing_headings = existing_content.get('headings', [])
         
-        # Create a mapping of existing sections to new recommended structure
-        section_mapping_prompt = f"""
-        I need to restructure an article about "{keyword}" while preserving as much original content as possible.
+        # Get section text for each heading to process sections individually
+        section_content = {}
+        for i, heading in enumerate(existing_headings):
+            heading_text = heading.get('text', '')
+            
+            # Get paragraphs associated with this heading
+            paragraphs = heading.get('paragraphs', [])
+            section_text = "\n\n".join(paragraphs)
+            
+            section_content[heading_text] = section_text
         
-        Original article headings:
-        {json.dumps([h.get('text', '') for h in existing_headings], indent=2)}
+        # Process the content section by section
+        optimized_sections = []
+        change_notes = []
         
-        Recommended new structure:
-        {json.dumps(semantic_structure, indent=2)}
+        # First, generate the new structure
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        optimized_sections.append(f"<h1>{h1}</h1>")
         
-        Create a mapping that shows where each section of original content should go in the new structure.
-        Format as JSON with original heading as key and target new heading as value.
-        """
+        # Track what original headings have been processed
+        processed_headings = set()
         
-        # Get section mapping
-        mapping_response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert content restructuring assistant."},
-                {"role": "user", "content": section_mapping_prompt}
-            ],
-            temperature=0.2
-        )
-        
-        # Extract section mapping
-        mapping_content = mapping_response.choices[0].message.content
-        section_mapping = {}
-        try:
-            # Extract JSON if embedded in text
-            json_match = re.search(r'({.*})', mapping_content, re.DOTALL)
-            if json_match:
-                mapping_content = json_match.group(1)
-            section_mapping = json.loads(mapping_content)
-        except:
-            # Fallback if mapping fails
-            section_mapping = {}
-        
-        # Process content in chunks to handle longer documents
-        # Split original content into max 8000-char chunks to preserve more
-        content_chunks = [original_content[i:i+8000] for i in range(0, len(original_content), 8000)]
-        chunk_descriptions = []
-        
-        for i, chunk in enumerate(content_chunks):
-            chunk_desc = f"CONTENT CHUNK {i+1}: {chunk}"
-            chunk_descriptions.append(chunk_desc)
-        
-        chunks_text = "\n\n".join(chunk_descriptions[:3])  # Limit to first 3 chunks if very long
-        
-        # Format PAA questions - ADDING THIS TO FIX THE ERROR
-        paa_text = ""
-        if paa_questions:
-            paa_text = "People Also Asked Questions:\n"
-            for i, q in enumerate(paa_questions[:5], 1):  # Limit to top 5 PAA questions
-                paa_text += f"{i}. {q.get('question', '')}\n"
-        
-        # Format related keywords - ADDING THIS TO FIX POTENTIAL ERRORS
-        related_kw_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10]])
-        
-        # Generate optimized content with better preservation instructions
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert content preservation specialist who optimizes articles while maintaining original value."},
-                {"role": "user", "content": f"""
-                Create an optimized version of an article about "{keyword}" by PRESERVING and restructuring existing content.
+        # For each recommended section in the new structure
+        for section in semantic_structure.get('sections', []):
+            h2 = section.get('h2', '')
+            if not h2:
+                continue
                 
-                IMPORTANT PRESERVATION INSTRUCTIONS:
-                1. This is NOT a rewrite task - this is a restructuring and enhancement task
-                2. Preserve all valuable, unique content from the original article
-                3. Only rewrite sections that are clearly off-topic or poorly written
-                4. Keep original examples, data points, and unique insights intact
-                5. Maintain the original tone and voice where possible
+            # Find most relevant original heading for this section
+            matching_response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert at matching content sections."},
+                    {"role": "user", "content": f"""
+                        Find the most relevant heading from the original content that matches this new section:
+                        
+                        New section: {h2}
+                        
+                        Original headings to choose from:
+                        {json.dumps([h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings], indent=2)}
+                        
+                        Return ONLY the exact text of the best matching original heading, or "NONE" if no good match exists.
+                    """}
+                ],
+                temperature=0.1
+            )
+            
+            matching_heading = matching_response.choices[0].message.content.strip()
+            if matching_heading == "NONE" or matching_heading not in section_content:
+                # No matching content found - create new section
+                optimized_sections.append(f"<h2>{h2}</h2>")
+                optimized_sections.append(f"<p>[New section created based on competitor analysis]</p>")
+                change_notes.append(f"Added new section: {h2}")
                 
-                Use this recommended semantic structure as your framework:
-                {json.dumps(semantic_structure, indent=2)}
+                # Generate new content for this section
+                section_content_response = openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert content writer."},
+                        {"role": "user", "content": f"""
+                            Write content for this section about "{keyword}": {h2}
+                            
+                            Include relevant information based on competitor content and improve semantic relevance.
+                            Write approximately 2-3 paragraphs of substantive content.
+                            
+                            Format with proper HTML paragraph tags.
+                        """}
+                    ],
+                    temperature=0.4
+                )
                 
-                Content mapping (where original sections should go in new structure):
-                {json.dumps(section_mapping, indent=2)}
+                new_section_content = section_content_response.choices[0].message.content
+                optimized_sections.append(new_section_content)
                 
-                ORIGINAL CONTENT TO PRESERVE AND RESTRUCTURE:
-                {chunks_text}
+            else:
+                # Found matching content - preserve and enhance
+                processed_headings.add(matching_heading)
+                original_section_content = section_content.get(matching_heading, '')
                 
-                Enhance the restructured content by:
-                1. Adding missing information from competitor content where relevant
-                2. Integrating answers to these PAA questions naturally: {paa_text}
-                3. Including these related keywords where they fit naturally: {related_kw_text}
-                4. Improving semantic relevance to the target keyword "{keyword}"
+                # Add the new heading
+                optimized_sections.append(f"<h2>{h2}</h2>")
                 
-                Format the article with proper HTML:
-                - Main title in <h1> tags
-                - Section headings in <h2> tags
-                - Subsection headings in <h3> tags
-                - Paragraphs in <p> tags
-                - Use <ul>, <li> for bullet points
+                # Enhance this section
+                enhanced_section_response = openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert at enhancing content while preserving value."},
+                        {"role": "user", "content": f"""
+                            Enhance this original content section while PRESERVING its value.
+                            
+                            Original heading: {matching_heading}
+                            New heading: {h2}
+                            
+                            Original content:
+                            {original_section_content}
+                            
+                            Instructions:
+                            1. Keep all valuable information from the original content
+                            2. Preserve specific examples, data points, and unique insights
+                            3. Improve semantic relevance to keyword "{keyword}"
+                            4. Fix any unclear writing but maintain the original voice
+                            5. Add any critical missing information
+                            
+                            Format with proper HTML paragraph tags.
+                            
+                            Also provide a brief list of what changed, in this format:
+                            CHANGES: [bullet point list]
+                        """}
+                    ],
+                    temperature=0.3
+                )
                 
-                The article should read cohesively while maximizing preservation of original content.
-                """}
-            ],
-            temperature=0.3  # Lower temperature for more faithful preservation
-        )
+                enhanced_response = enhanced_section_response.choices[0].message.content
+                
+                # Extract changes and content
+                changes_section = ""
+                if "CHANGES:" in enhanced_response:
+                    content_parts = enhanced_response.split("CHANGES:")
+                    enhanced_content = content_parts[0].strip()
+                    changes_section = content_parts[1].strip()
+                    change_notes.append(f"Modified section '{matching_heading}' → '{h2}':\n{changes_section}")
+                else:
+                    enhanced_content = enhanced_response
+                    change_notes.append(f"Modified section '{matching_heading}' → '{h2}'")
+                
+                optimized_sections.append(enhanced_content)
+            
+            # Process H3 subsections
+            for subsection in section.get('subsections', []):
+                h3 = subsection.get('h3', '')
+                if not h3:
+                    continue
+                
+                optimized_sections.append(f"<h3>{h3}</h3>")
+                
+                # Generate content for this subsection
+                subsection_content_response = openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert content writer."},
+                        {"role": "user", "content": f"""
+                            Write content for this subsection about "{keyword}": {h3} (under main section {h2})
+                            
+                            Include relevant information based on competitor content and improve semantic relevance.
+                            Write approximately 1-2 paragraphs of substantive content.
+                            
+                            Format with proper HTML paragraph tags.
+                        """}
+                    ],
+                    temperature=0.4
+                )
+                
+                subsection_content = subsection_content_response.choices[0].message.content
+                optimized_sections.append(subsection_content)
+                change_notes.append(f"Added subsection: {h3}")
         
-        optimized_content = response.choices[0].message.content
-        return optimized_content, True
-        
-    except Exception as e:
-        error_msg = f"Exception in generate_optimized_article: {str(e)}"
-        logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        return "", False
+        # Check for important original sections that weren't incorporated
+        unprocessed_headings = [h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings]
+        for heading in unprocessed_headings:
+            if not heading:
+                continue
+                
+            # Determine if this content should be preserved
+            preserve_response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert at analyzing content relevance."},
+                    {"role": "user", "content": f"""
+                        Analyze this section to determine if it contains unique valuable content relevant to "{keyword}" that should be preserved:
+                        
+                        Section heading: {heading}
+                        
+                        Section content:
+                        {section_content.get(heading, '')}
+                        
+                        Answer only YES or NO.
+                    """}
+                ],
+                temperature=0.1
+            )
+            
+            preserve_decision = preserve_response.choices[0].message.content.strip().upper()
+            
+            if preserve_decision == "YES":
+                # This section has valuable content that should be preserved
 
 def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
     """
@@ -2716,8 +2791,8 @@ def main():
                                         st.error("Failed to create updated document")
                                 
                                 else:  # Generate Optimized Article
-                                    # Generate optimized article
-                                    optimized_content, success = generate_optimized_article(
+                                    # Generate optimized article with change tracking
+                                    optimized_content, change_summary, success = generate_optimized_article_with_tracking(
                                         existing_content,
                                         st.session_state.results['scraped_contents'],
                                         st.session_state.results['semantic_structure'],
@@ -2730,10 +2805,34 @@ def main():
                                     if success and optimized_content:
                                         # Store the optimized content
                                         st.session_state.results['optimized_content'] = optimized_content
+                                        st.session_state.results['change_summary'] = change_summary
                                         
-                                        # Display the optimized content
-                                        st.markdown("## Optimized Article")
-                                        st.markdown(optimized_content, unsafe_allow_html=True)
+                                        # Display a tabbed view
+                                        opt_tabs = st.tabs(["Optimized Article", "Change Summary", "Side-by-Side"])
+                                        
+                                        with opt_tabs[0]:
+                                            st.markdown("## Optimized Article")
+                                            st.markdown(optimized_content, unsafe_allow_html=True)
+                                        
+                                        with opt_tabs[1]:
+                                            st.markdown("## What Changed")
+                                            st.markdown(change_summary, unsafe_allow_html=True)
+                                            
+                                        with opt_tabs[2]:
+                                            st.markdown("## Original vs. Optimized")
+                                            
+                                            # Create two columns
+                                            col1, col2 = st.columns(2)
+                                            
+                                            with col1:
+                                                st.markdown("### Original Document")
+                                                st.markdown(existing_content.get('full_text', ''))
+                                                
+                                            with col2:
+                                                st.markdown("### Optimized Document")
+                                                # Display without the change summary part
+                                                content_only = optimized_content.split('<hr>')[0] if '<hr>' in optimized_content else optimized_content
+                                                st.markdown(content_only, unsafe_allow_html=True)
                                         
                                         # Create Word document from HTML
                                         doc_stream = create_word_document_from_html(
@@ -2752,16 +2851,24 @@ def main():
                                         st.success(f"Optimized article generated in {format_time(time.time() - start_time)}")
                                     else:
                                         st.error("Failed to generate optimized article")
-                            else:
-                                st.error("Failed to analyze content gaps")
-                        else:
-                            st.error("Failed to parse uploaded document")
-            
+                                        
             # Show previously generated recommendations if available
             if 'content_gaps' in st.session_state.results:
                 if 'optimized_content' in st.session_state.results:
                     st.subheader("Previously Generated Optimized Article")
-                    st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
+                    
+                    # If we have a previously generated change summary, show tabs
+                    if 'change_summary' in st.session_state.results:
+                        prev_tabs = st.tabs(["Optimized Article", "Change Summary"])
+                        
+                        with prev_tabs[0]:
+                            st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
+                            
+                        with prev_tabs[1]:
+                            st.markdown(st.session_state.results['change_summary'], unsafe_allow_html=True)
+                    else:
+                        # Just show the content without tabs if no change summary
+                        st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
                     
                     # If we have a previously optimized article, offer download
                     if 'keyword' in st.session_state.results:
