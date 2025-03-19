@@ -1967,7 +1967,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         
         # Process the content section by section
         optimized_sections = []
-        change_notes = []
+        
+        # Track changes by category
+        structure_changes = []  # Heading/structure changes
+        content_additions = []  # New content added
+        content_improvements = []  # Content that was enhanced
         
         # First, generate the new structure
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
@@ -2005,8 +2009,6 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new section
                 optimized_sections.append(f"<h2>{h2}</h2>")
-                optimized_sections.append(f"<p>[New section created based on competitor analysis]</p>")
-                change_notes.append(f"Added new section: {h2}")
                 
                 # Generate new content for this section
                 section_content_response = openai.ChatCompletion.create(
@@ -2027,6 +2029,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 
                 new_section_content = section_content_response.choices[0].message.content
                 optimized_sections.append(new_section_content)
+                
+                # Track change
+                content_additions.append(f"Added new section '{h2}' based on competitor analysis")
+                structure_changes.append(f"Added new section: {h2}")
                 
             else:
                 # Found matching content - preserve and enhance
@@ -2059,8 +2065,8 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             
                             Format with proper HTML paragraph tags.
                             
-                            Also provide a brief list of what changed, in this format:
-                            CHANGES: [bullet point list]
+                            Also provide a single sentence summary of the key improvements you made:
+                            IMPROVEMENTS: [single sentence summary of key improvements]
                         """}
                     ],
                     temperature=0.3
@@ -2068,16 +2074,22 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 
                 enhanced_response = enhanced_section_response.choices[0].message.content
                 
-                # Extract changes and content
-                changes_section = ""
-                if "CHANGES:" in enhanced_response:
-                    content_parts = enhanced_response.split("CHANGES:")
+                # Extract improvements summary
+                improvements_summary = ""
+                if "IMPROVEMENTS:" in enhanced_response:
+                    content_parts = enhanced_response.split("IMPROVEMENTS:")
                     enhanced_content = content_parts[0].strip()
-                    changes_section = content_parts[1].strip()
-                    change_notes.append(f"Modified section '{matching_heading}' → '{h2}':\n{changes_section}")
+                    improvements_summary = content_parts[1].strip()
+                    
+                    # Add to improvement tracking
+                    if matching_heading != h2:
+                        structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
+                    
+                    content_improvements.append(f"Enhanced '{h2}': {improvements_summary}")
                 else:
                     enhanced_content = enhanced_response
-                    change_notes.append(f"Modified section '{matching_heading}' → '{h2}'")
+                    if matching_heading != h2:
+                        structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
                 
                 optimized_sections.append(enhanced_content)
             
@@ -2108,10 +2120,14 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 
                 subsection_content = subsection_content_response.choices[0].message.content
                 optimized_sections.append(subsection_content)
-                change_notes.append(f"Added subsection: {h3}")
+                
+                # Track change
+                structure_changes.append(f"Added subsection: {h3} under {h2}")
         
         # Check for important original sections that weren't incorporated
         unprocessed_headings = [h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings]
+        preserved_sections = []
+        
         for heading in unprocessed_headings:
             if not heading:
                 continue
@@ -2141,31 +2157,44 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 # This section has valuable content that should be preserved
                 optimized_sections.append(f"<h2>{heading}</h2>")
                 optimized_sections.append(f"<p>{section_content.get(heading, '')}</p>")
-                change_notes.append(f"Preserved original section: {heading}")
+                preserved_sections.append(heading)
+        
+        if preserved_sections:
+            content_improvements.append(f"Preserved {len(preserved_sections)} original sections with unique valuable content")
         
         # Create final document with change summary
         optimized_html = "\n".join(optimized_sections)
         
-        # Create change summary
-        change_summary = "<h2>Change Summary</h2>\n<ul>\n"
-        for note in change_notes:
-            change_summary += f"<li>{note}</li>\n"
-        change_summary += "</ul>"
-        
-        # Create final document with both content and change tracking
-        final_document = f"""
-        <div class="content-container">
-            {optimized_html}
-        </div>
-        
-        <hr>
-        
-        <div class="changes-container">
-            {change_summary}
+        # Create a more user-friendly change summary
+        change_summary = f"""
+        <div class="change-summary">
+            <h2>Optimization Summary</h2>
+            
+            <p>This document has been optimized for the keyword <strong>"{keyword}"</strong> while preserving valuable original content.</p>
+            
+            <h3>Key Improvements:</h3>
+            <ul>
+                <li>Restructured content to better match search intent</li>
+                <li>Enhanced keyword relevance throughout the document</li>
+                <li>Preserved {len(preserved_sections)} original sections with unique value</li>
+                <li>Added {len(content_additions)} new sections to address content gaps</li>
+            </ul>
+            
+            <h3>Structure Changes:</h3>
+            <ul>
+                {"".join(f"<li>{change}</li>" for change in structure_changes[:5])}
+                {f"<li>Plus {len(structure_changes) - 5} additional structure changes</li>" if len(structure_changes) > 5 else ""}
+            </ul>
+            
+            <h3>Content Enhancements:</h3>
+            <ul>
+                {"".join(f"<li>{improvement}</li>" for improvement in content_improvements[:5])}
+                {f"<li>Plus {len(content_improvements) - 5} additional content improvements</li>" if len(content_improvements) > 5 else ""}
+            </ul>
         </div>
         """
         
-        return final_document, change_summary, True
+        return optimized_html, change_summary, True
         
     except Exception as e:
         error_msg = f"Exception in generate_optimized_article_with_tracking: {str(e)}"
@@ -2173,20 +2202,49 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         logger.error(traceback.format_exc())
         return "", "", False
 
-
-def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
+def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "") -> BytesIO:
     """
-    Create a Word document from HTML content
+    Create a Word document from HTML content with improved formatting
     Returns: document_stream
     """
     try:
         doc = Document()
         
         # Add document title
-        doc.add_heading(f'Optimized Content: {keyword}', 0)
+        title = doc.add_heading(f'Optimized Content: {keyword}', 0)
+        title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
         
         # Add date
-        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        date_para = doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        date_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        
+        # Add horizontal line
+        doc.add_paragraph("_" * 50)
+        
+        # Add change summary if provided
+        if change_summary:
+            doc.add_heading("Optimization Summary", 1)
+            
+            # Parse HTML summary
+            summary_soup = BeautifulSoup(change_summary, 'html.parser')
+            
+            # Extract key points
+            for h3 in summary_soup.find_all('h3'):
+                doc.add_heading(h3.get_text(), 2)
+                
+                # Get the list that follows this heading
+                ul = h3.find_next('ul')
+                if ul:
+                    for li in ul.find_all('li'):
+                        doc.add_paragraph(li.get_text(), style='List Bullet')
+            
+            # Add separator before main content
+            doc.add_paragraph()
+            doc.add_paragraph("_" * 50)
+            doc.add_paragraph()
+        
+        # Add content heading
+        doc.add_heading("Optimized Content", 1)
         
         # Parse HTML content and add to document
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -2194,7 +2252,20 @@ def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
         for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
             if element.name in ['h1', 'h2', 'h3']:
                 level = int(element.name[1])
-                doc.add_heading(element.get_text(), level=level)
+                heading = doc.add_heading(element.get_text(), level=level)
+                
+                # Add some styling based on heading level
+                if level == 1:
+                    heading.runs[0].font.size = Pt(16)
+                    heading.runs[0].font.bold = True
+                elif level == 2:
+                    heading.runs[0].font.size = Pt(14)
+                    heading.runs[0].font.bold = True
+                else:
+                    heading.runs[0].font.size = Pt(12)
+                    heading.runs[0].font.bold = True
+                    heading.runs[0].italic = True
+                    
             elif element.name == 'p':
                 doc.add_paragraph(element.get_text())
             elif element.name == 'ul':
@@ -2842,14 +2913,13 @@ def main():
                                         st.session_state.results['change_summary'] = change_summary
                                         
                                         # Display a tabbed view
-                                        opt_tabs = st.tabs(["Optimized Article", "Change Summary", "Side-by-Side"])
+                                        opt_tabs = st.tabs(["Optimized Article", "Optimization Summary"])
                                         
                                         with opt_tabs[0]:
                                             st.markdown("## Optimized Article")
                                             st.markdown(optimized_content, unsafe_allow_html=True)
                                         
                                         with opt_tabs[1]:
-                                            st.markdown("## What Changed")
                                             st.markdown(change_summary, unsafe_allow_html=True)
                                             
                                         with opt_tabs[2]:
@@ -2871,7 +2941,8 @@ def main():
                                         # Create Word document from HTML
                                         doc_stream = create_word_document_from_html(
                                             optimized_content, 
-                                            st.session_state.results['keyword']
+                                            st.session_state.results['keyword'],
+                                            change_summary
                                         )
                                         
                                         # Download button
