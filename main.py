@@ -2137,7 +2137,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             preserve_decision = preserve_response.choices[0].message.content.strip().upper()
             
-            if preserve_decision == "YES":
+        if preserve_decision == "YES":
             # This section has valuable content that should be preserved
 
 def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
