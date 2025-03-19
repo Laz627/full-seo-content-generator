@@ -1941,41 +1941,53 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
-                              keyword: str, paa_questions: List[Dict], openai_api_key: str) -> Tuple[str, str, bool]:
+                              keyword: str, paa_questions: List[Dict], openai_api_key: str,
+                              target_word_count: int = 1500) -> Tuple[str, str, bool]:
     """
-    Generate a complete optimized article with change tracking to show modifications.
+    Generate a complete optimized article with change tracking and controlled length.
+    
+    Args:
+        target_word_count: Target word count for the entire article (default 1500)
     
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
         openai.api_key = openai_api_key
         
-        # Extract existing content structure more effectively
+        # Extract existing content structure
         original_content = existing_content.get('full_text', '')
         existing_headings = existing_content.get('headings', [])
+        
+        # Estimate words per section based on target word count and structure
+        num_sections = len(semantic_structure.get('sections', []))
+        if num_sections == 0:
+            num_sections = 5  # Default if no sections defined
+        
+        # Calculate target words per section (allowing 15% for H1 and conclusion)
+        words_per_section = int((target_word_count * 0.85) / num_sections)
         
         # Get section text for each heading to process sections individually
         section_content = {}
         for i, heading in enumerate(existing_headings):
             heading_text = heading.get('text', '')
-            
-            # Get paragraphs associated with this heading
             paragraphs = heading.get('paragraphs', [])
             section_text = "\n\n".join(paragraphs)
-            
             section_content[heading_text] = section_text
         
         # Process the content section by section
         optimized_sections = []
         
         # Track changes by category
-        structure_changes = []  # Heading/structure changes
-        content_additions = []  # New content added
-        content_improvements = []  # Content that was enhanced
+        structure_changes = []
+        content_additions = []
+        content_improvements = []
         
         # First, generate the new structure
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
         optimized_sections.append(f"<h1>{h1}</h1>")
+        
+        # Track word count
+        current_word_count = len(h1.split())
         
         # Track what original headings have been processed
         processed_headings = set()
@@ -1985,6 +1997,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             h2 = section.get('h2', '')
             if not h2:
                 continue
+                
+            # Skip sections if we're already approaching the target word count
+            if current_word_count > (target_word_count * 0.85):
+                break
                 
             # Find most relevant original heading for this section
             matching_response = openai.ChatCompletion.create(
@@ -2006,20 +2022,33 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             )
             
             matching_heading = matching_response.choices[0].message.content.strip()
+            optimized_sections.append(f"<h2>{h2}</h2>")
+            current_word_count += len(h2.split())
+            
+            # Calculate words available for this section and its subsections
+            subsection_count = len(section.get('subsections', []))
+            # If there are subsections, allocate 60% to the main section and 40% to subsections
+            if subsection_count > 0:
+                section_word_limit = int(words_per_section * 0.6)
+                subsection_word_limit = int((words_per_section * 0.4) / subsection_count)
+            else:
+                section_word_limit = words_per_section
+                subsection_word_limit = 0
+            
             if matching_heading == "NONE" or matching_heading not in section_content:
-                # No matching content found - create new section
-                optimized_sections.append(f"<h2>{h2}</h2>")
-                
-                # Generate new content for this section
+                # No matching content found - create new section with controlled length
                 section_content_response = openai.ChatCompletion.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are an expert content writer."},
+                        {"role": "system", "content": "You are an expert content writer focused on concise, informative content."},
                         {"role": "user", "content": f"""
                             Write content for this section about "{keyword}": {h2}
                             
-                            Include relevant information based on competitor content and improve semantic relevance.
-                            Write approximately 2-3 paragraphs of substantive content.
+                            Requirements:
+                            1. Include relevant information based on competitor content
+                            2. Improve semantic relevance to the keyword
+                            3. STRICTLY limit to {section_word_limit} words
+                            4. Create substantive, non-fluff content
                             
                             Format with proper HTML paragraph tags.
                         """}
@@ -2030,6 +2059,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 new_section_content = section_content_response.choices[0].message.content
                 optimized_sections.append(new_section_content)
                 
+                # Estimate added word count
+                section_words = len(re.findall(r'\b\w+\b', new_section_content))
+                current_word_count += section_words
+                
                 # Track change
                 content_additions.append(f"Added new section '{h2}' based on competitor analysis")
                 structure_changes.append(f"Added new section: {h2}")
@@ -2039,14 +2072,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 processed_headings.add(matching_heading)
                 original_section_content = section_content.get(matching_heading, '')
                 
-                # Add the new heading
-                optimized_sections.append(f"<h2>{h2}</h2>")
-                
-                # Enhance this section
+                # Enhance this section with strict word count limit
                 enhanced_section_response = openai.ChatCompletion.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are an expert at enhancing content while preserving value."},
+                        {"role": "system", "content": "You are an expert at enhancing content while preserving value and maintaining conciseness."},
                         {"role": "user", "content": f"""
                             Enhance this original content section while PRESERVING its value.
                             
@@ -2061,7 +2091,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             2. Preserve specific examples, data points, and unique insights
                             3. Improve semantic relevance to keyword "{keyword}"
                             4. Fix any unclear writing but maintain the original voice
-                            5. Add any critical missing information
+                            5. STRICTLY limit to {section_word_limit} words
                             
                             Format with proper HTML paragraph tags.
                             
@@ -2092,75 +2122,83 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                         structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
                 
                 optimized_sections.append(enhanced_content)
+                
+                # Estimate added word count
+                section_words = len(re.findall(r'\b\w+\b', enhanced_content))
+                current_word_count += section_words
             
-            # Process H3 subsections
-            for subsection in section.get('subsections', []):
-                h3 = subsection.get('h3', '')
-                if not h3:
-                    continue
-                
-                optimized_sections.append(f"<h3>{h3}</h3>")
-                
-                # Generate content for this subsection
-                subsection_content_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are an expert content writer."},
-                        {"role": "user", "content": f"""
-                            Write content for this subsection about "{keyword}": {h3} (under main section {h2})
-                            
-                            Include relevant information based on competitor content and improve semantic relevance.
-                            Write approximately 1-2 paragraphs of substantive content.
-                            
-                            Format with proper HTML paragraph tags.
-                        """}
-                    ],
-                    temperature=0.4
-                )
-                
-                subsection_content = subsection_content_response.choices[0].message.content
-                optimized_sections.append(subsection_content)
-                
-                # Track change
-                structure_changes.append(f"Added subsection: {h3} under {h2}")
+            # Process H3 subsections - but only if we have word count budget remaining
+            if current_word_count < target_word_count:
+                # Only process up to 3 subsections per section to control length
+                for subsection in section.get('subsections', [])[:3]:
+                    h3 = subsection.get('h3', '')
+                    if not h3:
+                        continue
+                    
+                    # Skip if we're getting too close to target word count
+                    if current_word_count > (target_word_count * 0.95):
+                        break
+                    
+                    optimized_sections.append(f"<h3>{h3}</h3>")
+                    current_word_count += len(h3.split())
+                    
+                    # Generate content for this subsection with strict word limit
+                    subsection_content_response = openai.ChatCompletion.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "You are an expert content writer focused on brevity and impact."},
+                            {"role": "user", "content": f"""
+                                Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
+                                
+                                Requirements:
+                                1. Include ONLY the most essential information
+                                2. Improve semantic relevance to keyword
+                                3. STRICTLY limit to {subsection_word_limit} words total
+                                4. Be substantive and informative despite brevity
+                                
+                                Format with proper HTML paragraph tags.
+                            """}
+                        ],
+                        temperature=0.4
+                    )
+                    
+                    subsection_content = subsection_content_response.choices[0].message.content
+                    optimized_sections.append(subsection_content)
+                    
+                    # Estimate added word count
+                    subsection_words = len(re.findall(r'\b\w+\b', subsection_content))
+                    current_word_count += subsection_words
+                    
+                    # Track change
+                    structure_changes.append(f"Added subsection: {h3} under {h2}")
         
-        # Check for important original sections that weren't incorporated
-        unprocessed_headings = [h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings]
-        preserved_sections = []
-        
-        for heading in unprocessed_headings:
-            if not heading:
-                continue
-                
-            # Determine if this content should be preserved
-            preserve_response = openai.ChatCompletion.create(
+        # Add a conclusion if we have room
+        if current_word_count < (target_word_count * 0.95):
+            optimized_sections.append("<h2>Conclusion</h2>")
+            
+            conclusion_word_limit = target_word_count - current_word_count
+            
+            conclusion_response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert at analyzing content relevance."},
+                    {"role": "system", "content": "You are an expert at writing concise, impactful conclusions."},
                     {"role": "user", "content": f"""
-                        Analyze this section to determine if it contains unique valuable content relevant to "{keyword}" that should be preserved:
+                        Write a brief conclusion for an article about "{keyword}".
                         
-                        Section heading: {heading}
+                        Requirements:
+                        1. Summarize key points
+                        2. Include a call to action
+                        3. Reinforce the keyword relevance
+                        4. STRICTLY limit to {conclusion_word_limit} words
                         
-                        Section content:
-                        {section_content.get(heading, '')}
-                        
-                        Answer only YES or NO.
+                        Format with proper HTML paragraph tags.
                     """}
                 ],
-                temperature=0.1
+                temperature=0.4
             )
             
-            preserve_decision = preserve_response.choices[0].message.content.strip().upper()
-            
-            if preserve_decision == "YES":
-                # This section has valuable content that should be preserved
-                optimized_sections.append(f"<h2>{heading}</h2>")
-                optimized_sections.append(f"<p>{section_content.get(heading, '')}</p>")
-                preserved_sections.append(heading)
-        
-        if preserved_sections:
-            content_improvements.append(f"Preserved {len(preserved_sections)} original sections with unique valuable content")
+            conclusion_content = conclusion_response.choices[0].message.content
+            optimized_sections.append(conclusion_content)
         
         # Create final document with change summary
         optimized_html = "\n".join(optimized_sections)
@@ -2176,7 +2214,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             <ul>
                 <li>Restructured content to better match search intent</li>
                 <li>Enhanced keyword relevance throughout the document</li>
-                <li>Preserved {len(preserved_sections)} original sections with unique value</li>
+                <li>Created a focused article of approximately {current_word_count} words</li>
                 <li>Added {len(content_additions)} new sections to address content gaps</li>
             </ul>
             
