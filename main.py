@@ -2582,19 +2582,19 @@ def main():
             # File uploader for document
             content_file = st.file_uploader("Upload Content Document", type=['docx'])
             
+            # Add radio button BEFORE the button click event
+            update_type = st.radio(
+                "Select update approach:",
+                ["Recommendations Only", "Generate Optimized Article"],
+                help="Choose whether to receive recommendations or get a completely optimized article"
+            )
+            
             if st.button("Generate Content Updates"):
                 if not openai_api_key:
                     st.error("Please enter OpenAI API key")
                 elif not content_file:
                     st.error("Please upload a content document")
                 else:
-                    # Add radio button for selecting update type
-                    update_type = st.radio(
-                        "Select update approach:",
-                        ["Recommendations Only", "Generate Optimized Article"],
-                        help="Choose whether to receive recommendations or get a completely optimized article"
-                    )
-                    
                     with st.spinner("Analyzing content and generating updates..."):
                         start_time = time.time()
                         
@@ -2728,17 +2728,37 @@ def main():
                             st.error("Failed to parse uploaded document")
             
             # Show previously generated recommendations if available
-            if 'content_gaps' in st.session_state.results and 'updated_doc' in st.session_state.results:
-                st.subheader("Previously Generated Update Recommendations")
+            if 'content_gaps' in st.session_state.results:
+                if 'optimized_content' in st.session_state.results:
+                    st.subheader("Previously Generated Optimized Article")
+                    st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
+                    
+                    # If we have a previously optimized article, offer download
+                    if 'keyword' in st.session_state.results:
+                        doc_stream = create_word_document_from_html(
+                            st.session_state.results['optimized_content'],
+                            st.session_state.results['keyword']
+                        )
+                        
+                        st.download_button(
+                            label="Download Previous Optimized Article",
+                            data=doc_stream,
+                            file_name=f"optimized_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="download_previous_optimized"
+                        )
                 
-                # Download button for previously generated document
-                st.download_button(
-                    label="Download Previous Update Recommendations",
-                    data=st.session_state.results['updated_doc'],
-                    file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    key="download_previous_updates"  # Added unique key
-                )
+                elif 'updated_doc' in st.session_state.results:
+                    st.subheader("Previously Generated Update Recommendations")
+                    
+                    # Download button for previously generated document
+                    st.download_button(
+                        label="Download Previous Update Recommendations",
+                        data=st.session_state.results['updated_doc'],
+                        file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_previous_updates"
+                    )
 
 if __name__ == "__main__":
     main()
