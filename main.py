@@ -2912,7 +2912,7 @@ def main():
                                         st.session_state.results['optimized_content'] = optimized_content
                                         st.session_state.results['change_summary'] = change_summary
                                         
-                                        # Display a tabbed view
+                                        # Display a simplified tabbed view
                                         opt_tabs = st.tabs(["Optimized Article", "Optimization Summary"])
                                         
                                         with opt_tabs[0]:
@@ -2920,23 +2920,8 @@ def main():
                                             st.markdown(optimized_content, unsafe_allow_html=True)
                                         
                                         with opt_tabs[1]:
+                                            st.markdown("## Optimization Summary")
                                             st.markdown(change_summary, unsafe_allow_html=True)
-                                            
-                                        with opt_tabs[2]:
-                                            st.markdown("## Original vs. Optimized")
-                                            
-                                            # Create two columns
-                                            col1, col2 = st.columns(2)
-                                            
-                                            with col1:
-                                                st.markdown("### Original Document")
-                                                st.markdown(existing_content.get('full_text', ''))
-                                                
-                                            with col2:
-                                                st.markdown("### Optimized Document")
-                                                # Display without the change summary part
-                                                content_only = optimized_content.split('<hr>')[0] if '<hr>' in optimized_content else optimized_content
-                                                st.markdown(content_only, unsafe_allow_html=True)
                                         
                                         # Create Word document from HTML
                                         doc_stream = create_word_document_from_html(
