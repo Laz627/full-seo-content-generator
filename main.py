@@ -2003,6 +2003,16 @@ def generate_optimized_article(existing_content: Dict, competitor_contents: List
         
         chunks_text = "\n\n".join(chunk_descriptions[:3])  # Limit to first 3 chunks if very long
         
+        # Format PAA questions - ADDING THIS TO FIX THE ERROR
+        paa_text = ""
+        if paa_questions:
+            paa_text = "People Also Asked Questions:\n"
+            for i, q in enumerate(paa_questions[:5], 1):  # Limit to top 5 PAA questions
+                paa_text += f"{i}. {q.get('question', '')}\n"
+        
+        # Format related keywords - ADDING THIS TO FIX POTENTIAL ERRORS
+        related_kw_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10]])
+        
         # Generate optimized content with better preservation instructions
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
