@@ -2137,8 +2137,42 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             preserve_decision = preserve_response.choices[0].message.content.strip().upper()
             
-        if preserve_decision == "YES":
-            # This section has valuable content that should be preserved
+            if preserve_decision == "YES":
+                # This section has valuable content that should be preserved
+                optimized_sections.append(f"<h2>{heading}</h2>")
+                optimized_sections.append(f"<p>{section_content.get(heading, '')}</p>")
+                change_notes.append(f"Preserved original section: {heading}")
+        
+        # Create final document with change summary
+        optimized_html = "\n".join(optimized_sections)
+        
+        # Create change summary
+        change_summary = "<h2>Change Summary</h2>\n<ul>\n"
+        for note in change_notes:
+            change_summary += f"<li>{note}</li>\n"
+        change_summary += "</ul>"
+        
+        # Create final document with both content and change tracking
+        final_document = f"""
+        <div class="content-container">
+            {optimized_html}
+        </div>
+        
+        <hr>
+        
+        <div class="changes-container">
+            {change_summary}
+        </div>
+        """
+        
+        return final_document, change_summary, True
+        
+    except Exception as e:
+        error_msg = f"Exception in generate_optimized_article_with_tracking: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return "", "", False
+
 
 def create_word_document_from_html(html_content: str, keyword: str) -> BytesIO:
     """
