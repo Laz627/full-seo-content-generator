@@ -18,6 +18,8 @@ from typing import List, Dict, Any, Tuple, Optional
 import logging
 import traceback
 import openpyxl
+import matplotlib.pyplot as plt
+import altair as alt
 
 # Configure logging
 logging.basicConfig(
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Set page configuration
 st.set_page_config(
-    page_title="SEO Analysis & Content Generator",
+    page_title="SEO Content Optimizer",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -547,13 +549,563 @@ def extract_headings(url: str) -> Dict[str, List[str]]:
         return {'h1': [], 'h2': [], 'h3': []}
 
 ###############################################################################
-# 5. Meta Title and Description Generation
+# 5. Content Scoring Functions (NEW)
 ###############################################################################
 
-def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
+def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str) -> Tuple[Dict, bool]:
+    """
+    Extract important terms and topics from competitor content using NLP analysis
+    Returns: term_data, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Combine all content for analysis
+        combined_content = "\n\n".join([c.get('content', '') for c in competitor_contents if c.get('content')])
+        
+        # Prepare summarized content if it's too long
+        if len(combined_content) > 10000:
+            combined_content = combined_content[:10000]
+        
+        # Use OpenAI to analyze content and extract important terms
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an SEO expert specializing in content analysis."},
+                {"role": "user", "content": f"""
+                Analyze the following content from top-ranking pages and extract:
+                
+                1. Primary terms (most important for this topic, maximum 15 terms)
+                2. Secondary terms (supporting terms for this topic, maximum 20 terms)
+                3. Questions being answered (maximum 10 questions)
+                4. Topics that need to be covered (maximum 10 topics)
+                
+                Format your response as JSON:
+                {{
+                    "primary_terms": [
+                        {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
+                        {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
+                        ...
+                    ],
+                    "secondary_terms": [
+                        {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
+                        {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
+                        ...
+                    ],
+                    "questions": [
+                        "Question 1?",
+                        "Question 2?",
+                        ...
+                    ],
+                    "topics": [
+                        {{"topic": "Topic 1", "description": "This topic covers..."}},
+                        {{"topic": "Topic 2", "description": "This topic covers..."}},
+                        ...
+                    ]
+                }}
+                
+                Content to analyze:
+                {combined_content}
+                """}
+            ],
+            temperature=0.3
+        )
+        
+        # Extract and parse JSON response
+        content = response.choices[0].message.content
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        term_data = json.loads(content)
+        return term_data, True
+    
+    except Exception as e:
+        error_msg = f"Exception in extract_important_terms: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
+def score_content(content: str, term_data: Dict, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Score content based on keyword usage, semantic relevance, and comprehensiveness
+    Returns: score_data, success_status
+    """
+    try:
+        # Initialize scores
+        keyword_score = 0
+        primary_terms_score = 0
+        secondary_terms_score = 0
+        topic_coverage_score = 0
+        question_coverage_score = 0
+        
+        # Score primary keyword usage
+        keyword_count = len(re.findall(r'\b' + re.escape(keyword.lower()) + r'\b', content.lower()))
+        word_count = len(re.findall(r'\b\w+\b', content))
+        optimal_keyword_count = max(2, min(10, int(word_count * 0.01)))  # Between 0.5% and 2%
+        
+        # Calculate keyword score (max 100)
+        if keyword_count > 0:
+            if keyword_count <= optimal_keyword_count:
+                keyword_score = (keyword_count / optimal_keyword_count) * 100
+            else:
+                keyword_score = max(50, 100 - ((keyword_count - optimal_keyword_count) / optimal_keyword_count * 50))
+        
+        # Score primary terms
+        primary_term_found = 0
+        primary_terms_total = len(term_data.get('primary_terms', []))
+        primary_term_counts = {}
+        
+        if primary_terms_total > 0:
+            for term_data_item in term_data.get('primary_terms', []):
+                term = term_data_item.get('term', '')
+                if term:
+                    term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                    primary_term_counts[term] = {
+                        'count': term_count,
+                        'importance': term_data_item.get('importance', 0),
+                        'recommended': term_data_item.get('recommended_usage', 1)
+                    }
+                    
+                    if term_count > 0:
+                        primary_term_found += 1
+                        
+                        # Bonus for optimal usage
+                        if term_count >= term_data_item.get('recommended_usage', 1):
+                            if term_count <= term_data_item.get('recommended_usage', 1) * 2:
+                                primary_term_found += 0.2
+                    
+            primary_terms_score = (primary_term_found / primary_terms_total) * 100
+            
+        # Score secondary terms
+        secondary_term_found = 0
+        secondary_terms_total = len(term_data.get('secondary_terms', []))
+        secondary_term_counts = {}
+        
+        if secondary_terms_total > 0:
+            for term_data_item in term_data.get('secondary_terms', []):
+                term = term_data_item.get('term', '')
+                if term:
+                    term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                    secondary_term_counts[term] = {
+                        'count': term_count,
+                        'importance': term_data_item.get('importance', 0),
+                        'recommended': term_data_item.get('recommended_usage', 1)
+                    }
+                    
+                    if term_count > 0:
+                        secondary_term_found += 1
+                        
+            secondary_terms_score = (secondary_term_found / secondary_terms_total) * 100
+        
+        # Score topic coverage
+        topics_covered = 0
+        topics_total = len(term_data.get('topics', []))
+        topic_coverage = {}
+        
+        if topics_total > 0:
+            for topic_data in term_data.get('topics', []):
+                topic = topic_data.get('topic', '')
+                if topic:
+                    is_covered = topic.lower() in content.lower()
+                    topic_coverage[topic] = {
+                        'covered': is_covered,
+                        'description': topic_data.get('description', '')
+                    }
+                    if is_covered:
+                        topics_covered += 1
+            
+            topic_coverage_score = (topics_covered / topics_total) * 100
+        
+        # Score question coverage
+        questions_answered = 0
+        questions_total = len(term_data.get('questions', []))
+        question_coverage = {}
+        
+        if questions_total > 0:
+            for question in term_data.get('questions', []):
+                core_question = question.replace('?', '').lower()
+                
+                # Look for core keywords from the question
+                question_words = re.findall(r'\b\w+\b', core_question)
+                significant_words = [w for w in question_words if len(w) > 3 and w not in ['what', 'when', 'where', 'which', 'who', 'why', 'how']]
+                
+                # Count how many significant words appear
+                matches = sum(1 for word in significant_words if word in content.lower())
+                match_ratio = 0
+                if significant_words:
+                    match_ratio = matches / len(significant_words)
+                
+                # If most significant words appear, consider the question answered
+                is_answered = match_ratio >= 0.7
+                question_coverage[question] = {
+                    'answered': is_answered,
+                    'match_ratio': match_ratio
+                }
+                
+                if is_answered:
+                    questions_answered += 1
+            
+            question_coverage_score = (questions_answered / questions_total) * 100
+        
+        # Calculate overall score (weighted)
+        overall_score = (
+            keyword_score * 0.2 +
+            primary_terms_score * 0.35 +
+            secondary_terms_score * 0.15 +
+            topic_coverage_score * 0.2 +
+            question_coverage_score * 0.1
+        )
+        
+        # Compile detailed results
+        score_data = {
+            'overall_score': round(overall_score),
+            'components': {
+                'keyword_score': round(keyword_score),
+                'primary_terms_score': round(primary_terms_score),
+                'secondary_terms_score': round(secondary_terms_score),
+                'topic_coverage_score': round(topic_coverage_score),
+                'question_coverage_score': round(question_coverage_score)
+            },
+            'details': {
+                'word_count': word_count,
+                'keyword_count': keyword_count,
+                'optimal_keyword_count': optimal_keyword_count,
+                'primary_terms_found': primary_term_found,
+                'primary_terms_total': primary_terms_total,
+                'primary_term_counts': primary_term_counts,
+                'secondary_terms_found': secondary_term_found,
+                'secondary_terms_total': secondary_terms_total,
+                'secondary_term_counts': secondary_term_counts,
+                'topics_covered': topics_covered,
+                'topics_total': topics_total,
+                'topic_coverage': topic_coverage,
+                'questions_answered': questions_answered,
+                'questions_total': questions_total,
+                'question_coverage': question_coverage
+            },
+            'grade': get_score_grade(overall_score)
+        }
+        
+        return score_data, True
+    
+    except Exception as e:
+        error_msg = f"Exception in score_content: {str(e)}"
+        logger.error(error_msg)
+        return {'overall_score': 0}, False
+
+def get_score_grade(score: float) -> str:
+    """Convert numeric score to letter grade"""
+    if score >= 90:
+        return "A+"
+    elif score >= 85:
+        return "A"
+    elif score >= 80:
+        return "A-"
+    elif score >= 75:
+        return "B+"
+    elif score >= 70:
+        return "B"
+    elif score >= 65:
+        return "B-"
+    elif score >= 60:
+        return "C+"
+    elif score >= 55:
+        return "C"
+    elif score >= 50:
+        return "C-"
+    elif score >= 40:
+        return "D"
+    else:
+        return "F"
+
+def highlight_keywords_in_content(content: str, term_data: Dict, keyword: str) -> Tuple[str, bool]:
+    """
+    Highlight primary and secondary keywords in content with different colors
+    Returns: highlighted_html, success_status
+    """
+    try:
+        # Create a copy of the content for highlighting
+        highlighted_content = content
+        
+        # Function to wrap term with color
+        def wrap_with_span(match, color):
+            term = match.group(0)
+            return f'<span style="background-color: {color};">{term}</span>'
+        
+        # Highlight primary keyword
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+        highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#FFEB9C"), highlighted_content)
+        
+        # Highlight primary terms
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            if term and term.lower() != keyword.lower():
+                pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+                highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#CDFFD8"), highlighted_content)
+        
+        # Highlight secondary terms
+        for term_info in term_data.get('secondary_terms', []):
+            term = term_info.get('term', '')
+            if term:
+                pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+                highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#E6F3FF"), highlighted_content)
+        
+        return highlighted_content, True
+    
+    except Exception as e:
+        error_msg = f"Exception in highlight_keywords_in_content: {str(e)}"
+        logger.error(error_msg)
+        return content, False
+
+def get_content_improvement_suggestions(content: str, term_data: Dict, score_data: Dict, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Generate suggestions for improving content based on scoring results
+    Returns: suggestions, success_status
+    """
+    try:
+        suggestions = {
+            'missing_terms': [],
+            'underused_terms': [],
+            'missing_topics': [],
+            'unanswered_questions': [],
+            'readability_suggestions': [],
+            'structure_suggestions': []
+        }
+        
+        # Check for missing primary terms
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended_usage = term_info.get('recommended_usage', 1)
+            
+            if term:
+                term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                
+                if term_count == 0:
+                    suggestions['missing_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'type': 'primary',
+                        'current_usage': 0
+                    })
+                elif term_count < recommended_usage:
+                    suggestions['underused_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'current_usage': term_count,
+                        'type': 'primary'
+                    })
+        
+        # Check for missing secondary terms (only list important ones)
+        for term_info in term_data.get('secondary_terms', [])[:15]:  # Limit to top 15
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended_usage = term_info.get('recommended_usage', 1)
+            
+            if term and importance > 0.5:  # Only suggest important secondary terms
+                term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                
+                if term_count == 0:
+                    suggestions['missing_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'type': 'secondary',
+                        'current_usage': 0
+                    })
+        
+        # Check for missing topics
+        for topic_info in term_data.get('topics', []):
+            topic = topic_info.get('topic', '')
+            description = topic_info.get('description', '')
+            
+            if topic and topic.lower() not in content.lower():
+                suggestions['missing_topics'].append({
+                    'topic': topic,
+                    'description': description
+                })
+        
+        # Check for unanswered questions
+        for question in term_data.get('questions', []):
+            core_question = question.replace('?', '').lower()
+            question_words = re.findall(r'\b\w+\b', core_question)
+            significant_words = [w for w in question_words if len(w) > 3 and w not in ['what', 'when', 'where', 'which', 'who', 'why', 'how']]
+            
+            matches = sum(1 for word in significant_words if word in content.lower())
+            
+            if not significant_words or matches < len(significant_words) * 0.7:
+                suggestions['unanswered_questions'].append(question)
+        
+        # Readability suggestions
+        word_count = score_data.get('details', {}).get('word_count', 0)
+        
+        if word_count < 300:
+            suggestions['readability_suggestions'].append("Content is too short. Aim for at least 800-1200 words for most topics.")
+        elif word_count < 800:
+            suggestions['readability_suggestions'].append("Content may be too brief. Consider expanding to 1000+ words for better topic coverage.")
+        
+        # Structure suggestions based on parsing the content
+        soup = BeautifulSoup(content, 'html.parser')
+        headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        paragraphs = soup.find_all('p')
+        
+        if len(headings) < 3:
+            suggestions['structure_suggestions'].append("Add more section headings to improve structure and readability.")
+        
+        if paragraphs:
+            # Check paragraph length
+            long_paragraphs = sum(1 for p in paragraphs if len(p.get_text().split()) > 200)
+            if long_paragraphs > 0:
+                suggestions['structure_suggestions'].append(f"Break up {long_paragraphs} long paragraph(s) into smaller chunks for better readability.")
+            
+            # Check for use of lists
+            lists = soup.find_all(['ul', 'ol'])
+            if len(lists) == 0:
+                suggestions['structure_suggestions'].append("Consider adding bulleted or numbered lists to improve scannability.")
+        
+        return suggestions, True
+    
+    except Exception as e:
+        error_msg = f"Exception in get_content_improvement_suggestions: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
+def create_content_scoring_brief(keyword: str, term_data: Dict, score_data: Dict, suggestions: Dict) -> BytesIO:
+    """
+    Create a downloadable content scoring brief with recommendations
+    Returns: document_stream
+    """
+    try:
+        doc = Document()
+        
+        # Add document title
+        doc.add_heading(f'Content Optimization Brief: {keyword}', 0)
+        
+        # Add date
+        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Overall Score
+        doc.add_heading('Content Score', level=1)
+        score_para = doc.add_paragraph()
+        score_para.add_run(f"Overall Score: ").bold = True
+        score_run = score_para.add_run(f"{score_data.get('overall_score', 0)} ({score_data.get('grade', 'F')})")
+        
+        overall_score = score_data.get('overall_score', 0)
+        if overall_score >= 70:
+            score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+        elif overall_score < 50:
+            score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        else:
+            score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+
+        # Component scores
+        components = score_data.get('components', {})
+        table = doc.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
+        
+        header_cells = table.rows[0].cells
+        header_cells[0].text = 'Component'
+        header_cells[1].text = 'Score'
+        
+        for component, score in components.items():
+            formatted_component = component.replace('_score', '').replace('_', ' ').title()
+            row_cells = table.add_row().cells
+            row_cells[0].text = formatted_component
+            row_cells[1].text = str(score)
+        
+        # Primary Terms to Include
+        doc.add_heading('Primary Terms to Include', level=1)
+        
+        primary_terms_table = doc.add_table(rows=1, cols=4)
+        primary_terms_table.style = 'Table Grid'
+        
+        header_cells = primary_terms_table.rows[0].cells
+        header_cells[0].text = 'Term'
+        header_cells[1].text = 'Importance'
+        header_cells[2].text = 'Recommended Usage'
+        header_cells[3].text = 'Current Usage'
+        
+        primary_term_counts = score_data.get('details', {}).get('primary_term_counts', {})
+        
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended = term_info.get('recommended_usage', 1)
+            
+            current_count = 0
+            if term in primary_term_counts:
+                current_count = primary_term_counts[term].get('count', 0)
+            
+            row_cells = primary_terms_table.add_row().cells
+            row_cells[0].text = term
+            row_cells[1].text = f"{importance:.2f}"
+            row_cells[2].text = str(recommended)
+            row_cells[3].text = str(current_count)
+            
+            # Highlight issues
+            if current_count == 0:
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif current_count < recommended:
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+        
+        # Content Gaps
+        doc.add_heading('Content Gaps to Address', level=1)
+        
+        # Missing Topics
+        if suggestions.get('missing_topics'):
+            doc.add_heading('Missing Topics', level=2)
+            for topic in suggestions.get('missing_topics', []):
+                topic_para = doc.add_paragraph(style='List Bullet')
+                topic_para.add_run(topic.get('topic', '')).bold = True
+                topic_para.add_run(f": {topic.get('description', '')}")
+        
+        # Unanswered Questions
+        if suggestions.get('unanswered_questions'):
+            doc.add_heading('Questions to Answer', level=2)
+            for question in suggestions.get('unanswered_questions', []):
+                q_para = doc.add_paragraph(style='List Bullet')
+                q_para.add_run(question)
+        
+        # Structure Recommendations
+        if suggestions.get('structure_suggestions') or suggestions.get('readability_suggestions'):
+            doc.add_heading('Structure & Readability Recommendations', level=1)
+            
+            for suggestion in suggestions.get('structure_suggestions', []):
+                s_para = doc.add_paragraph(style='List Bullet')
+                s_para.add_run(suggestion)
+            
+            for suggestion in suggestions.get('readability_suggestions', []):
+                r_para = doc.add_paragraph(style='List Bullet')
+                r_para.add_run(suggestion)
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream
+    
+    except Exception as e:
+        error_msg = f"Exception in create_content_scoring_brief: {str(e)}"
+        logger.error(error_msg)
+        return BytesIO()
+
+###############################################################################
+# 6. Meta Title and Description Generation
+###############################################################################
+
+def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], term_data: Dict, 
                       openai_api_key: str) -> Tuple[str, str, bool]:
     """
-    Generate meta title and description for the content
+    Generate optimized meta title and description for the content
     Returns: meta_title, meta_description, success_status
     """
     try:
@@ -565,6 +1117,13 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         # Get top 5 related keywords
         top_keywords = ", ".join([kw.get('keyword', '') for kw in related_keywords[:5] if kw.get('keyword')])
         
+        # Get primary terms if available
+        primary_terms = []
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = [term.get('term') for term in term_data.get('primary_terms', [])[:5]]
+        
+        primary_terms_str = ", ".join(primary_terms) if primary_terms else top_keywords
+        
         # Generate meta tags
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
@@ -575,6 +1134,7 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
                 
                 The article's main heading is: "{h1}"
                 
+                Primary terms to include: {primary_terms_str}
                 Related keywords to consider: {top_keywords}
                 
                 Guidelines:
@@ -622,7 +1182,7 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         return f"{keyword} - Complete Guide", f"Learn everything about {keyword} in our comprehensive guide. Discover expert tips and best practices.", False
 
 ###############################################################################
-# 6. Embeddings and Semantic Analysis
+# 7. Embeddings and Semantic Analysis
 ###############################################################################
 
 def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedding-3-small") -> Tuple[List[float], bool]:
@@ -715,45 +1275,16 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
         return {}, False
 
 ###############################################################################
-# 7. Content Generation
+# 8. Content Generation
 ###############################################################################
 
-def verify_semantic_match(anchor_text: str, page_title: str) -> bool:
-    """
-    Verify that anchor text and page title have meaningful word overlap after removing stop words
-    """
-    # Define common stop words
-    stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 
-                  'by', 'about', 'as', 'is', 'are', 'was', 'were', 'of', 'from', 'into', 'during',
-                  'after', 'before', 'above', 'below', 'between', 'under', 'over', 'through', 'it',
-                  'its', 'this', 'that', 'these', 'those', 'their', 'them', 'they', 'he', 'she',
-                  'his', 'her', 'him', 'we', 'us', 'our', 'you', 'your', 'i', 'me', 'my', 'myself',
-                  'yourself', 'himself', 'herself', 'itself', 'themselves', 'ourselves', 'yourselves',
-                  'which', 'who', 'whom', 'whose', 'what', 'when', 'where', 'why', 'how', 'if', 'then',
-                  'else', 'so', 'because', 'while', 'each', 'such', 'only', 'very', 'some', 'will',
-                  'would', 'should', 'could', 'can', 'may', 'might', 'must', 'shall', 'not', 'no',
-                  'nor', 'all', 'any', 'both', 'either', 'neither', 'few', 'many', 'more', 'most',
-                  'other', 'some', 'such', 'than', 'too', 'very', 'just', 'ever', 'also'}
-    
-    # Convert to lowercase and tokenize
-    anchor_words = {word.lower() for word in re.findall(r'\b\w+\b', anchor_text)}
-    title_words = {word.lower() for word in re.findall(r'\b\w+\b', page_title)}
-    
-    # Remove stop words
-    anchor_meaningful = anchor_words - stop_words
-    title_meaningful = title_words - stop_words
-    
-    # Check for meaningful overlaps
-    overlaps = anchor_meaningful.intersection(title_meaningful)
-    
-    return len(overlaps) > 0
-
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
-                     serp_features: List[Dict], paa_questions: List[Dict], openai_api_key: str, 
-                     guidance_only: bool = False) -> Tuple[str, bool]:
+                     serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
+                     openai_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
     """
     Generate comprehensive article with natural language flow and balanced keyword usage.
     If guidance_only is True, will generate writing guidance instead of full content.
+    Uses term_data to optimize for important terms.
     Returns: article_content, success_status
     """
     try:
@@ -813,6 +1344,41 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
+        # Prepare important terms data
+        primary_terms_str = ""
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = []
+            for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                usage = term_info.get('recommended_usage', 1)
+                if term:
+                    primary_terms.append(f"{term} (importance: {importance:.2f}, usage: {usage})")
+            
+            primary_terms_str = "\n".join(primary_terms)
+        
+        secondary_terms_str = ""
+        if term_data and 'secondary_terms' in term_data:
+            secondary_terms = []
+            for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                if term and importance > 0.5:
+                    secondary_terms.append(f"{term} (importance: {importance:.2f})")
+            
+            secondary_terms_str = "\n".join(secondary_terms)
+        
+        topics_to_cover_str = ""
+        if term_data and 'topics' in term_data:
+            topics = []
+            for topic_info in term_data.get('topics', []):
+                topic = topic_info.get('topic', '')
+                description = topic_info.get('description', '')
+                if topic:
+                    topics.append(f"{topic}: {description}")
+            
+            topics_to_cover_str = "\n".join(topics)
+        
         if guidance_only:
             # Generate writing guidance for each section
             response = openai.ChatCompletion.create(
@@ -840,6 +1406,16 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Related keywords to incorporate: {related_kw_str}
                     - Optimize for these SERP features: {serp_features_str}
                     - Questions to address: {paa_str}
+                    
+                    Important terms to include:
+                    Primary terms (use these multiple times):
+                    {primary_terms_str}
+                    
+                    Secondary terms (try to include these at least once):
+                    {secondary_terms_str}
+                    
+                    Key topics to cover:
+                    {topics_to_cover_str}
                     
                     Format the guidance with proper HTML:
                     - Main title in <h1> tags
@@ -895,6 +1471,16 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     {paa_str}
                     9. Optimize for these SERP features: {serp_features_str}
                     
+                    Important terms to include:
+                    Primary terms (use these multiple times):
+                    {primary_terms_str}
+                    
+                    Secondary terms (try to include these at least once):
+                    {secondary_terms_str}
+                    
+                    Key topics to cover:
+                    {topics_to_cover_str}
+                    
                     CRITICAL WRITING INSTRUCTIONS:
                     1. DO NOT use rhetorical questions in the content, especially:
                        - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
@@ -932,7 +1518,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         return "", False
 
 ###############################################################################
-# 8. Internal Linking
+# 9. Internal Linking
 ###############################################################################
 
 def parse_site_pages_spreadsheet(uploaded_file) -> Tuple[List[Dict], bool]:
@@ -1258,71 +1844,17 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         logger.error(traceback.format_exc())
         return article_content, [], False
 
-def apply_internal_links(article_content: str, link_suggestions: List[Dict]) -> str:
-    """
-    Apply internal links to article content with improved precision
-    """
-    # Sort suggestions by anchor text length (descending) to avoid substring issues
-    link_suggestions = sorted(link_suggestions, key=lambda x: len(x.get('anchor_text', '')), reverse=True)
-    
-    # Create HTML soup to preserve structure
-    soup = BeautifulSoup(article_content, 'html.parser')
-    
-    # Track paragraphs we've already processed to avoid duplicate replacements
-    processed_tags = set()
-    replaced_anchors = set()
-    
-    # Process each link suggestion
-    for suggestion in link_suggestions:
-        url = suggestion.get('url', '')
-        anchor_text = suggestion.get('anchor_text', '')
-        
-        if not url or not anchor_text or anchor_text in replaced_anchors:
-            continue
-            
-        # Find all text elements
-        for tag in soup.find_all(['p', 'li', 'h2', 'h3']):
-            # Skip if we've already processed this tag
-            tag_id = id(tag)
-            if tag_id in processed_tags:
-                continue
-                
-            # Skip headings that contain the exact anchor text (avoid changing heading content)
-            if tag.name in ['h1', 'h2', 'h3'] and tag.get_text().strip() == anchor_text:
-                continue
-                
-            # Check if anchor text is in this tag
-            tag_text = str(tag)
-            if anchor_text in tag_text and '<a ' not in tag_text:
-                # Replace text with linked version but preserve HTML
-                linked_html = tag_text.replace(
-                    anchor_text, 
-                    f'<a href="{url}">{anchor_text}</a>',
-                    1  # Only replace first occurrence
-                )
-                
-                # Replace the tag with updated HTML
-                new_tag = BeautifulSoup(linked_html, 'html.parser')
-                tag.replace_with(new_tag)
-                
-                # Mark this anchor as replaced and tag as processed
-                replaced_anchors.add(anchor_text)
-                processed_tags.add(tag_id)
-                break
-    
-    # Return the updated HTML
-    return str(soup)
-
 ###############################################################################
-# 9. Document Generation
+# 10. Document Generation
 ###############################################################################
 
 def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
                         semantic_structure: Dict, article_content: str, meta_title: str, 
-                        meta_description: str, paa_questions: List[Dict],
-                        internal_links: List[Dict] = None, guidance_only: bool = False) -> Tuple[BytesIO, bool]:
+                        meta_description: str, paa_questions: List[Dict], term_data: Dict = None,
+                        score_data: Dict = None, internal_links: List[Dict] = None, 
+                        guidance_only: bool = False) -> Tuple[BytesIO, bool]:
     """
-    Create Word document with all components
+    Create Word document with all components including content score if available
     Returns: document_stream, success_status
     """
     try:
@@ -1410,7 +1942,68 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     # Handle case where CPC might be a string or other non-numeric value
                     row_cells[2].text = "$0.00"
         
-        # Section 3: Semantic Structure
+        # Section 3: Important Terms (if available)
+        if term_data:
+            doc.add_heading('Important Terms to Include', level=1)
+            
+            # Primary Terms
+            doc.add_heading('Primary Terms', level=2)
+            primary_table = doc.add_table(rows=1, cols=3)
+            primary_table.style = 'Table Grid'
+            
+            header_cells = primary_table.rows[0].cells
+            header_cells[0].text = 'Term'
+            header_cells[1].text = 'Importance'
+            header_cells[2].text = 'Recommended Usage'
+            
+            for term in term_data.get('primary_terms', []):
+                row_cells = primary_table.add_row().cells
+                row_cells[0].text = term.get('term', '')
+                row_cells[1].text = f"{term.get('importance', 0):.2f}"
+                row_cells[2].text = str(term.get('recommended_usage', 1))
+            
+            # Secondary Terms
+            doc.add_heading('Secondary Terms', level=2)
+            secondary_table = doc.add_table(rows=1, cols=2)
+            secondary_table.style = 'Table Grid'
+            
+            header_cells = secondary_table.rows[0].cells
+            header_cells[0].text = 'Term'
+            header_cells[1].text = 'Importance'
+            
+            for term in term_data.get('secondary_terms', [])[:15]:  # Limit to top 15
+                row_cells = secondary_table.add_row().cells
+                row_cells[0].text = term.get('term', '')
+                row_cells[1].text = f"{term.get('importance', 0):.2f}"
+        
+        # Section 4: Content Score (if available)
+        if score_data:
+            doc.add_heading('Content Score', level=1)
+            
+            score_paragraph = doc.add_paragraph()
+            score_paragraph.add_run(f"Overall Score: ").bold = True
+            score_run = score_paragraph.add_run(f"{score_data.get('overall_score', 0)} - {score_data.get('grade', 'F')}")
+            
+            # Color the score based on value
+            overall_score = score_data.get('overall_score', 0)
+            if overall_score >= 70:
+                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            elif overall_score < 50:
+                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            else:
+                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            
+            # Component scores
+            doc.add_heading('Score Components', level=2)
+            components = score_data.get('components', {})
+            
+            for component, value in components.items():
+                component_para = doc.add_paragraph(style='List Bullet')
+                component_name = component.replace('_score', '').replace('_', ' ').title()
+                component_para.add_run(f"{component_name}: ").bold = True
+                component_para.add_run(f"{value}")
+        
+        # Section 5: Semantic Structure
         doc.add_heading('Recommended Content Structure', level=1)
         
         doc.add_paragraph(f"Recommended H1: {semantic_structure.get('h1', '')}")
@@ -1421,7 +2014,7 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
             for j, subsection in enumerate(section.get('subsections', []), 1):
                 doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
         
-        # Section 4: Generated Article or Guidance
+        # Section 6: Generated Article or Guidance
         if guidance_only:
             doc.add_heading('Content Writing Guidance', level=1)
         else:
@@ -1487,7 +2080,7 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                         else:
                             p.add_run(content.get_text())
         
-        # Section 5: Internal Linking (if provided)
+        # Section 7: Internal Linking (if provided)
         if internal_links:
             doc.add_heading('Internal Linking Summary', level=1)
             
@@ -1521,7 +2114,7 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         return BytesIO(), False
 
 ###############################################################################
-# 10. Content Update Functions
+# 11. Content Update Functions
 ###############################################################################
 
 def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
@@ -1587,10 +2180,10 @@ def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
         return {}, False
 
 def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
-                        openai_api_key: str, keyword: str, paa_questions: List[Dict] = None) -> Tuple[Dict, bool]:
+                        term_data: Dict, score_data: Dict, openai_api_key: str, 
+                        keyword: str, paa_questions: List[Dict] = None) -> Tuple[Dict, bool]:
     """
-    Analyze gaps between existing content and competitor content with semantic relevancy analysis
-    and People Also Asked integration
+    Enhanced content gap analysis that incorporates content scoring data
     Returns: content_gaps, success_status
     """
     try:
@@ -1627,8 +2220,87 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
             for i, q in enumerate(paa_questions, 1):
                 paa_text += f"{i}. {q.get('question', '')}\n"
         
-        # Use OpenAI to analyze content gaps with improved prompting for insertion positions,
-        # semantic relevancy, and PAA questions
+        # Prepare content scoring data
+        content_score_text = ""
+        if score_data:
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            content_score_text = f"Content Score: {overall_score} ({grade})\n\n"
+            
+            # Add component scores
+            components = score_data.get('components', {})
+            content_score_text += "Component Scores:\n"
+            for component, score in components.items():
+                component_name = component.replace('_score', '').replace('_', ' ').title()
+                content_score_text += f"- {component_name}: {score}\n"
+            
+            # Add missing terms
+            if 'details' in score_data:
+                details = score_data.get('details', {})
+                
+                # Missing primary terms
+                primary_term_counts = details.get('primary_term_counts', {})
+                missing_primary = []
+                underused_primary = []
+                
+                if term_data and 'primary_terms' in term_data:
+                    for term_info in term_data.get('primary_terms', []):
+                        term = term_info.get('term', '')
+                        recommended = term_info.get('recommended_usage', 1)
+                        
+                        if term in primary_term_counts:
+                            actual = primary_term_counts[term].get('count', 0)
+                            if actual == 0:
+                                missing_primary.append(term)
+                            elif actual < recommended:
+                                underused_primary.append(f"{term} (used {actual}/{recommended} times)")
+                        else:
+                            missing_primary.append(term)
+                
+                if missing_primary:
+                    content_score_text += "\nMissing Primary Terms:\n"
+                    for term in missing_primary:
+                        content_score_text += f"- {term}\n"
+                
+                if underused_primary:
+                    content_score_text += "\nUnderused Primary Terms:\n"
+                    for term in underused_primary:
+                        content_score_text += f"- {term}\n"
+                
+                # Unanswered questions from scoring
+                question_coverage = details.get('question_coverage', {})
+                unanswered = []
+                
+                for question, info in question_coverage.items():
+                    if not info.get('answered', False):
+                        unanswered.append(question)
+                
+                if unanswered:
+                    content_score_text += "\nUnanswered Questions from Content Scoring:\n"
+                    for q in unanswered:
+                        content_score_text += f"- {q}\n"
+        
+        # Prepare term data
+        term_data_text = ""
+        if term_data:
+            # Primary terms
+            if 'primary_terms' in term_data:
+                term_data_text += "Primary Terms (Top 10):\n"
+                for term_info in term_data.get('primary_terms', [])[:10]:
+                    term = term_info.get('term', '')
+                    importance = term_info.get('importance', 0)
+                    usage = term_info.get('recommended_usage', 1)
+                    term_data_text += f"- {term} (importance: {importance:.2f}, usage: {usage})\n"
+            
+            # Topics to cover
+            if 'topics' in term_data:
+                term_data_text += "\nKey Topics to Cover:\n"
+                for topic_info in term_data.get('topics', []):
+                    topic = topic_info.get('topic', '')
+                    description = topic_info.get('description', '')
+                    term_data_text += f"- {topic}: {description}\n"
+        
+        # Use OpenAI to analyze content gaps with improved prompting that includes content scoring data
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
@@ -1641,6 +2313,10 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                 
                 Recommended Content Structure Based on Competitors:
                 {json.dumps(recommended_headings, indent=2)}
+                
+                {content_score_text}
+                
+                {term_data_text}
                 
                 {paa_text}
                 
@@ -1656,7 +2332,8 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                 3. Key topics/points covered by competitors but missing in the existing content
                 4. Content areas that need expansion
                 5. SEMANTIC RELEVANCY ISSUES: Analyze if the content is too broadly focused instead of targeting the specific keyword "{keyword}". Identify sections that need to be refocused.
-                6. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
+                6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
+                7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
                 
                 Format your response as JSON:
                 {{
@@ -1682,6 +2359,13 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                             "section": "Section that's off-target", 
                             "issue": "Description of how the content is too broad or off-target", 
                             "recommendation": "How to refocus the content on the keyword '{keyword}'"
+                        }}
+                    ],
+                    "term_usage_issues": [
+                        {{
+                            "term": "Missing or underused term",
+                            "section": "Section where it should be added",
+                            "suggestion": "How to naturally incorporate this term"
                         }}
                     ],
                     "unanswered_questions": [
@@ -1713,9 +2397,9 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         logger.error(traceback.format_exc())
         return {}, False
 
-def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str) -> Tuple[BytesIO, bool]:
+def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str, score_data: Dict = None) -> Tuple[BytesIO, bool]:
     """
-    Create a new Word document with clear recommendations for content improvements
+    Enhanced document creation with content score information
     Returns: document_stream, success_status
     """
     try:
@@ -1727,6 +2411,56 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         # Add date
         doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         
+        # Add content score if available
+        if score_data:
+            score_section = doc.add_heading('Content Score Assessment', 1)
+            
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            
+            score_para = doc.add_paragraph()
+            score_para.add_run(f"Overall Score: ").bold = True
+            score_run = score_para.add_run(f"{overall_score} ({grade})")
+            
+            # Color the score based on value
+            if overall_score >= 70:
+                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            elif overall_score < 50:
+                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            else:
+                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            
+            # Component scores
+            if 'components' in score_data:
+                components = score_data.get('components', {})
+                
+                component_table = doc.add_table(rows=1, cols=2)
+                component_table.style = 'Table Grid'
+                
+                header_cells = component_table.rows[0].cells
+                header_cells[0].text = 'Component'
+                header_cells[1].text = 'Score'
+                
+                for component, score in components.items():
+                    row_cells = component_table.add_row().cells
+                    component_name = component.replace('_score', '').replace('_', ' ').title()
+                    row_cells[0].text = component_name
+                    row_cells[1].text = str(score)
+            
+            # Score improvement projection
+            doc.add_paragraph()
+            improvement_para = doc.add_paragraph()
+            improvement_para.add_run("Projected Score After Updates: ").bold = True
+            
+            # Calculate projected improvement
+            projected_score = min(100, overall_score + 20)  # Assume ~20 point improvement
+            projected_grade = get_score_grade(projected_score)
+            
+            projected_run = improvement_para.add_run(f"{projected_score} ({projected_grade})")
+            projected_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            
+            doc.add_paragraph("Implementing the recommendations in this document is projected to significantly improve your content's search optimization score.")
+        
         # Executive Summary
         doc.add_heading('Executive Summary', 1)
         summary = doc.add_paragraph()
@@ -1737,6 +2471,8 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         recommendations = []
         if content_gaps.get('semantic_relevancy_issues'):
             recommendations.append("Improve semantic relevancy to better target the keyword")
+        if content_gaps.get('term_usage_issues'):
+            recommendations.append(f"Address {len(content_gaps.get('term_usage_issues', []))} term usage issues")
         if content_gaps.get('missing_headings'):
             recommendations.append(f"Add {len(content_gaps.get('missing_headings', []))} new sections")
         if content_gaps.get('revised_headings'):
@@ -1773,6 +2509,32 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 rec_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
                 
                 doc.add_paragraph()  # Add spacing
+        
+        # Term Usage Issues (New Section)
+        if content_gaps.get('term_usage_issues'):
+            doc.add_heading('Term Usage Recommendations', 1)
+            
+            term_intro = doc.add_paragraph()
+            term_intro.add_run("To improve your content's semantic relevance and keyword targeting, add these important terms:")
+            
+            term_table = doc.add_table(rows=1, cols=3)
+            term_table.style = 'Table Grid'
+            
+            # Add header row
+            header_cells = term_table.rows[0].cells
+            header_cells[0].text = 'Term'
+            header_cells[1].text = 'Section'
+            header_cells[2].text = 'Recommendation'
+            
+            for issue in content_gaps.get('term_usage_issues', []):
+                row_cells = term_table.add_row().cells
+                term_run = row_cells[0].paragraphs[0].add_run(issue.get('term', ''))
+                term_run.bold = True
+                
+                row_cells[1].text = issue.get('section', '')
+                row_cells[2].text = issue.get('suggestion', '')
+            
+            doc.add_paragraph()  # Add spacing
         
         # 2. Content Structure Recommendations
         doc.add_heading('Content Structure Recommendations', 1)
@@ -1916,6 +2678,7 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
         
         implementation_steps = [
             "Start by addressing the semantic relevancy issues to align your content with the target keyword",
+            "Add missing important terms to improve keyword targeting and relevance",
             "Update headings to improve clarity and search relevance",
             "Add missing sections in the recommended locations",
             "Incorporate answers to 'People Also Asked' questions to address search intent",
@@ -1941,14 +2704,10 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
-                              keyword: str, paa_questions: List[Dict], openai_api_key: str,
-                              target_word_count: int = 1500) -> Tuple[str, str, bool]:
+                              keyword: str, paa_questions: List[Dict], term_data: Dict,
+                              openai_api_key: str, target_word_count: int = 1500) -> Tuple[str, str, bool]:
     """
-    Generate a complete optimized article with change tracking and controlled length.
-    
-    Args:
-        target_word_count: Target word count for the entire article (default 1500)
-    
+    Enhanced article generation that incorporates term data
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
@@ -1991,6 +2750,41 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         
         # Track what original headings have been processed
         processed_headings = set()
+        
+        # Prepare important terms data
+        primary_terms_str = ""
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = []
+            for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                usage = term_info.get('recommended_usage', 1)
+                if term:
+                    primary_terms.append(f"{term} (importance: {importance:.2f}, usage: {usage})")
+            
+            primary_terms_str = "\n".join(primary_terms)
+        
+        secondary_terms_str = ""
+        if term_data and 'secondary_terms' in term_data:
+            secondary_terms = []
+            for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                if term and importance > 0.5:
+                    secondary_terms.append(f"{term} (importance: {importance:.2f})")
+            
+            secondary_terms_str = "\n".join(secondary_terms)
+        
+        topics_to_cover_str = ""
+        if term_data and 'topics' in term_data:
+            topics = []
+            for topic_info in term_data.get('topics', []):
+                topic = topic_info.get('topic', '')
+                description = topic_info.get('description', '')
+                if topic:
+                    topics.append(f"{topic}: {description}")
+            
+            topics_to_cover_str = "\n".join(topics)
         
         # For each recommended section in the new structure
         for section in semantic_structure.get('sections', []):
@@ -2050,6 +2844,16 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             3. STRICTLY limit to {section_word_limit} words
                             4. Create substantive, non-fluff content
                             
+                            Important terms to include:
+                            Primary terms (use these if relevant):
+                            {primary_terms_str}
+                            
+                            Secondary terms (try to include these if relevant):
+                            {secondary_terms_str}
+                            
+                            Key topics to cover (if relevant to this section):
+                            {topics_to_cover_str}
+                            
                             Format with proper HTML paragraph tags.
                         """}
                     ],
@@ -2092,6 +2896,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             3. Improve semantic relevance to keyword "{keyword}"
                             4. Fix any unclear writing but maintain the original voice
                             5. STRICTLY limit to {section_word_limit} words
+                            
+                            Important terms to include or increase usage of:
+                            Primary terms (use these if relevant):
+                            {primary_terms_str}
+                            
+                            Secondary terms (try to include these if relevant):
+                            {secondary_terms_str}
                             
                             Format with proper HTML paragraph tags.
                             
@@ -2156,6 +2967,9 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                                 3. STRICTLY limit to {subsection_word_limit} words total
                                 4. Be substantive and informative despite brevity
                                 
+                                Important terms to include if relevant:
+                                Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                                
                                 Format with proper HTML paragraph tags.
                             """}
                         ],
@@ -2189,7 +3003,8 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                         1. Summarize key points
                         2. Include a call to action
                         3. Reinforce the keyword relevance
-                        4. STRICTLY limit to {conclusion_word_limit} words
+                        4. Include at least 2 primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                        5. STRICTLY limit to {conclusion_word_limit} words
                         
                         Format with proper HTML paragraph tags.
                     """}
@@ -2216,6 +3031,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 <li>Enhanced keyword relevance throughout the document</li>
                 <li>Created a focused article of approximately {current_word_count} words</li>
                 <li>Added {len(content_additions)} new sections to address content gaps</li>
+                <li>Incorporated important terms identified in top-ranking content</li>
             </ul>
             
             <h3>Structure Changes:</h3>
@@ -2240,9 +3056,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         logger.error(traceback.format_exc())
         return "", "", False
 
-def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "") -> BytesIO:
+def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "", 
+                                  score_data: Dict = None) -> BytesIO:
     """
-    Create a Word document from HTML content with improved formatting
+    Enhanced document creation with content score information
     Returns: document_stream
     """
     try:
@@ -2258,6 +3075,37 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         
         # Add horizontal line
         doc.add_paragraph("_" * 50)
+        
+        # Add content score if available
+        if score_data:
+            doc.add_heading("Content Score", 1)
+            
+            score_para = doc.add_paragraph()
+            score_para.add_run(f"Overall Score: ").bold = True
+            
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            
+            score_run = score_para.add_run(f"{overall_score} ({grade})")
+            
+            # Color the score based on value
+            if overall_score >= 70:
+                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            elif overall_score < 50:
+                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            else:
+                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            
+            # Component scores
+            components = score_data.get('components', {})
+            for component, score in components.items():
+                component_para = doc.add_paragraph(style='List Bullet')
+                component_name = component.replace('_score', '').replace('_', ' ').title()
+                component_para.add_run(f"{component_name}: ").bold = True
+                component_para.add_run(f"{score}")
+            
+            # Add separator
+            doc.add_paragraph("_" * 50)
         
         # Add change summary if provided
         if change_summary:
@@ -2326,11 +3174,11 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         return BytesIO()
 
 ###############################################################################
-# 11. Main Streamlit App
+# 12. Main Streamlit App
 ###############################################################################
 
 def main():
-    st.title("📊 SEO Analysis & Content Generator")
+    st.title("📊 SEO Content Optimizer")
     
     # Sidebar for API credentials
     st.sidebar.header("API Credentials")
@@ -2351,7 +3199,8 @@ def main():
         "Article Generation", 
         "Internal Linking", 
         "SEO Brief",
-        "Content Updates"  # New tab
+        "Content Updates",
+        "Content Scoring"  # New tab
     ])
     
     # Tab 1: Input & SERP Analysis
@@ -2490,6 +3339,15 @@ def main():
                         if structure_success:
                             st.session_state.results['semantic_structure'] = semantic_structure
                             
+                            # Extract important terms (new content scoring feature)
+                            st.text("Extracting important terms and topics...")
+                            term_data, term_success = extract_important_terms(
+                                scraped_contents, openai_api_key
+                            )
+                            
+                            if term_success:
+                                st.session_state.results['term_data'] = term_data
+                            
                             st.subheader("Recommended Semantic Structure")
                             st.write(f"**H1:** {semantic_structure.get('h1', '')}")
                             
@@ -2498,6 +3356,21 @@ def main():
                                 
                                 for j, subsection in enumerate(section.get('subsections', []), 1):
                                     st.write(f"  - **H3 {i}.{j}:** {subsection.get('h3', '')}")
+                            
+                            if term_success:
+                                st.subheader("Important Terms")
+                                
+                                # Display primary terms
+                                if 'primary_terms' in term_data:
+                                    st.write("**Primary Terms:**")
+                                    primary_df = pd.DataFrame(term_data['primary_terms'])
+                                    st.dataframe(primary_df)
+                                
+                                # Display secondary terms
+                                if 'secondary_terms' in term_data:
+                                    st.write("**Secondary Terms:**")
+                                    secondary_df = pd.DataFrame(term_data['secondary_terms'])
+                                    st.dataframe(secondary_df)
                             
                             st.success(f"Content analysis completed in {format_time(time.time() - start_time)}")
                         else:
@@ -2515,6 +3388,29 @@ def main():
                     
                     for j, subsection in enumerate(section.get('subsections', []), 1):
                         st.write(f"  - **H3 {i}.{j}:** {subsection.get('h3', '')}")
+                
+                # Show previously extracted term data if available
+                if 'term_data' in st.session_state.results:
+                    with st.expander("View Extracted Terms & Topics"):
+                        term_data = st.session_state.results['term_data']
+                        
+                        # Display primary terms
+                        if 'primary_terms' in term_data:
+                            st.write("**Primary Terms:**")
+                            primary_df = pd.DataFrame(term_data['primary_terms'])
+                            st.dataframe(primary_df)
+                        
+                        # Display secondary terms
+                        if 'secondary_terms' in term_data:
+                            st.write("**Secondary Terms:**")
+                            secondary_df = pd.DataFrame(term_data['secondary_terms'])
+                            st.dataframe(secondary_df)
+                        
+                        # Display topics
+                        if 'topics' in term_data:
+                            st.write("**Topics to Cover:**")
+                            topics_df = pd.DataFrame(term_data['topics'])
+                            st.dataframe(topics_df)
     
     # Tab 3: Article Generation
     with tabs[2]:
@@ -2538,13 +3434,17 @@ def main():
                     with st.spinner("Generating " + ("content guidance" if guidance_only else "article") + " and meta tags..."):
                         start_time = time.time()
                         
-                        # Generate article or guidance (with guidance_only parameter)
+                        # Use term data if available
+                        term_data = st.session_state.results.get('term_data', {})
+                        
+                        # Generate article or guidance (with term_data parameter)
                         article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
                             st.session_state.results.get('related_keywords', []),
                             st.session_state.results.get('serp_features', []),
                             st.session_state.results.get('paa_questions', []),
+                            term_data,
                             openai_api_key,
                             guidance_only
                         )
@@ -2559,11 +3459,12 @@ def main():
                             # Store the guidance flag
                             st.session_state.results['guidance_only'] = guidance_only
                             
-                            # Generate meta title and description
+                            # Generate meta title and description with term data
                             meta_title, meta_description, meta_success = generate_meta_tags(
                                 st.session_state.results['keyword'],
                                 st.session_state.results['semantic_structure'],
                                 st.session_state.results.get('related_keywords', []),
+                                term_data,
                                 openai_api_key
                             )
                             
@@ -2574,6 +3475,33 @@ def main():
                                 st.subheader("Meta Tags")
                                 st.write(f"**Meta Title:** {meta_title}")
                                 st.write(f"**Meta Description:** {meta_description}")
+                            
+                            # Score the content if it's a full article (new feature)
+                            if not guidance_only and 'term_data' in st.session_state.results:
+                                try:
+                                    score_data, score_success = score_content(
+                                        article_content,
+                                        st.session_state.results['term_data'],
+                                        st.session_state.results['keyword']
+                                    )
+                                    
+                                    if score_success:
+                                        st.session_state.results['content_score'] = score_data
+                                        
+                                        # Display content score
+                                        st.subheader("Content Score")
+                                        score = score_data.get('overall_score', 0)
+                                        grade = score_data.get('grade', 'F')
+                                        
+                                        # CSS to style the score display
+                                        score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                                        st.markdown(f"""
+                                        <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                                            <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                except Exception as e:
+                                    logger.error(f"Error scoring content: {e}")
                             
                             st.subheader("Generated " + ("Content Guidance" if guidance_only else "Article"))
                             st.markdown(article_content, unsafe_allow_html=True)
@@ -2588,6 +3516,21 @@ def main():
                     st.subheader("Previously Generated Meta Tags")
                     st.write(f"**Meta Title:** {st.session_state.results['meta_title']}")
                     st.write(f"**Meta Description:** {st.session_state.results['meta_description']}")
+                
+                # Display content score if available
+                if 'content_score' in st.session_state.results:
+                    st.subheader("Content Score")
+                    score_data = st.session_state.results['content_score']
+                    score = score_data.get('overall_score', 0)
+                    grade = score_data.get('grade', 'F')
+                    
+                    # CSS to style the score display
+                    score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                    st.markdown(f"""
+                    <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                        <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 # Display appropriate content based on what's available
                 if 'guidance_only' in st.session_state.results and st.session_state.results['guidance_only']:
@@ -2759,7 +3702,11 @@ def main():
                     # Get PAA questions
                     paa_questions = st.session_state.results.get('paa_questions', [])
                     
-                    # Create Word document (updated with guidance_only parameter)
+                    # Get term data and content score if available
+                    term_data = st.session_state.results.get('term_data', None)
+                    score_data = st.session_state.results.get('content_score', None)
+                    
+                    # Create Word document (enhanced with term_data and score_data)
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
                         st.session_state.results['organic_results'],
@@ -2769,6 +3716,8 @@ def main():
                         meta_title,
                         meta_description,
                         paa_questions,
+                        term_data,
+                        score_data,
                         internal_links,
                         guidance_only
                     )
@@ -2798,8 +3747,10 @@ def main():
                 ("People Also Asked", 'paa_questions' in st.session_state.results),
                 ("Related Keywords", 'related_keywords' in st.session_state.results),
                 ("Content Analysis", 'scraped_contents' in st.session_state.results),
+                ("Term Analysis", 'term_data' in st.session_state.results),
                 ("Semantic Structure", 'semantic_structure' in st.session_state.results),
                 ("Meta Title & Description", 'meta_title' in st.session_state.results),
+                ("Content Score", 'content_score' in st.session_state.results),
                 ("Generated Content", 'article_content' in st.session_state.results or 'guidance_content' in st.session_state.results),
                 ("Internal Linking", 'article_with_links' in st.session_state.results)
             ]
@@ -2818,7 +3769,7 @@ def main():
                     key="download_brief_2"  # Added unique key
                 )
     
-    # Tab 6: Content Updates (New Tab)
+    # Tab 6: Content Updates
     with tabs[5]:
         st.header("Content Update Recommendations")
         
@@ -2850,11 +3801,29 @@ def main():
                         existing_content, parse_success = parse_word_document(content_file)
                         
                         if parse_success and existing_content:
-                            # Common analysis regardless of approach
+                            # Get term data and score data if available
+                            term_data = st.session_state.results.get('term_data', {})
+                            
+                            # Score the existing content if we have term data
+                            score_data = None
+                            if term_data:
+                                html_content = f"<p>{existing_content.get('full_text', '').replace('\n\n', '</p><p>')}</p>"
+                                score_data, score_success = score_content(
+                                    html_content,
+                                    term_data,
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if score_success:
+                                    st.session_state.results['existing_content_score'] = score_data
+                            
+                            # Enhanced content gap analysis with term data and score data
                             content_gaps, gap_success = analyze_content_gaps(
                                 existing_content,
                                 st.session_state.results['scraped_contents'],
                                 st.session_state.results['semantic_structure'],
+                                term_data,
+                                score_data if score_data else {},
                                 openai_api_key,
                                 st.session_state.results['keyword'],
                                 st.session_state.results.get('paa_questions', [])
@@ -2866,18 +3835,40 @@ def main():
                                 st.session_state.results['content_gaps'] = content_gaps
                                 
                                 if update_type == "Recommendations Only":
-                                    # Create updated document with recommendations (original approach)
+                                    # Create updated document with recommendations (enhanced with score data)
                                     updated_doc, doc_success = create_updated_document(
                                         existing_content,
                                         content_gaps,
-                                        st.session_state.results['keyword']
+                                        st.session_state.results['keyword'],
+                                        score_data
                                     )
                                     
                                     if doc_success:
                                         st.session_state.results['updated_doc'] = updated_doc
                                         
+                                        # Display content score if available
+                                        if score_data:
+                                            st.subheader("Content Score Assessment")
+                                            score = score_data.get('overall_score', 0)
+                                            grade = score_data.get('grade', 'F')
+                                            
+                                            # CSS to style the score display
+                                            score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                                            st.markdown(f"""
+                                            <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                                                <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                                                <p>Implementing recommendations should significantly improve this score.</p>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                        
                                         # Display summary of recommendations
                                         st.subheader("Content Update Recommendations")
+                                        
+                                        # Term usage issues (new section)
+                                        if content_gaps.get('term_usage_issues'):
+                                            st.markdown("### Term Usage Issues")
+                                            term_table = pd.DataFrame(content_gaps['term_usage_issues'])
+                                            st.dataframe(term_table)
                                         
                                         # Semantic relevancy issues
                                         if content_gaps.get('semantic_relevancy_issues'):
@@ -2934,7 +3925,7 @@ def main():
                                         st.error("Failed to create updated document")
                                 
                                 else:  # Generate Optimized Article
-                                    # Generate optimized article with change tracking
+                                    # Generate optimized article with change tracking using term data
                                     optimized_content, change_summary, success = generate_optimized_article_with_tracking(
                                         existing_content,
                                         st.session_state.results['scraped_contents'],
@@ -2942,6 +3933,7 @@ def main():
                                         st.session_state.results.get('related_keywords', []),
                                         st.session_state.results['keyword'],
                                         st.session_state.results.get('paa_questions', []),
+                                        term_data,
                                         openai_api_key
                                     )
                                     
@@ -2949,6 +3941,51 @@ def main():
                                         # Store the optimized content
                                         st.session_state.results['optimized_content'] = optimized_content
                                         st.session_state.results['change_summary'] = change_summary
+                                        
+                                        # Score the optimized content
+                                        if term_data:
+                                            optimized_score_data, score_success = score_content(
+                                                optimized_content,
+                                                term_data,
+                                                st.session_state.results['keyword']
+                                            )
+                                            
+                                            if score_success:
+                                                st.session_state.results['optimized_content_score'] = optimized_score_data
+                                                
+                                                # Compare scores if we have both
+                                                if score_data:
+                                                    old_score = score_data.get('overall_score', 0)
+                                                    new_score = optimized_score_data.get('overall_score', 0)
+                                                    
+                                                    st.subheader("Content Score Improvement")
+                                                    
+                                                    # Score comparison with styling
+                                                    score_diff = new_score - old_score
+                                                    st.markdown(f"""
+                                                    <div style="background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                                            <div>
+                                                                <span style="font-size: 16px; font-weight: bold;">Original Score:</span>
+                                                                <span style="font-size: 18px; color: {'green' if old_score >= 70 else 'red' if old_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                                                    {old_score} ({score_data.get('grade', 'F')})
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                <span style="font-size: 16px; font-weight: bold;">New Score:</span>
+                                                                <span style="font-size: 18px; color: {'green' if new_score >= 70 else 'red' if new_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                                                    {new_score} ({optimized_score_data.get('grade', 'F')})
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <div style="text-align: center; padding-top: 5px;">
+                                                            <span style="font-size: 16px;">Improvement:</span>
+                                                            <span style="font-size: 20px; color: {'green' if score_diff > 0 else 'red' if score_diff < 0 else 'gray'}; font-weight: bold; margin-left: 10px;">
+                                                                {'+' if score_diff > 0 else ''}{score_diff} points
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    """, unsafe_allow_html=True)
                                         
                                         # Display a simplified tabbed view
                                         opt_tabs = st.tabs(["Optimized Article", "Optimization Summary"])
@@ -2961,11 +3998,12 @@ def main():
                                             st.markdown("## Optimization Summary")
                                             st.markdown(change_summary, unsafe_allow_html=True)
                                         
-                                        # Create Word document from HTML
+                                        # Create Word document from HTML with score data
                                         doc_stream = create_word_document_from_html(
                                             optimized_content, 
                                             st.session_state.results['keyword'],
-                                            change_summary
+                                            change_summary,
+                                            st.session_state.results.get('optimized_content_score')
                                         )
                                         
                                         # Download button
@@ -2985,6 +4023,37 @@ def main():
                 if 'optimized_content' in st.session_state.results:
                     st.subheader("Previously Generated Optimized Article")
                     
+                    # Display score improvement if available
+                    if 'existing_content_score' in st.session_state.results and 'optimized_content_score' in st.session_state.results:
+                        old_score = st.session_state.results['existing_content_score'].get('overall_score', 0)
+                        new_score = st.session_state.results['optimized_content_score'].get('overall_score', 0)
+                        
+                        score_diff = new_score - old_score
+                        st.markdown(f"""
+                        <div style="background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <div>
+                                    <span style="font-size: 16px; font-weight: bold;">Original Score:</span>
+                                    <span style="font-size: 18px; color: {'green' if old_score >= 70 else 'red' if old_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                        {old_score} ({st.session_state.results['existing_content_score'].get('grade', 'F')})
+                                    </span>
+                                </div>
+                                <div>
+                                    <span style="font-size: 16px; font-weight: bold;">New Score:</span>
+                                    <span style="font-size: 18px; color: {'green' if new_score >= 70 else 'red' if new_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                        {new_score} ({st.session_state.results['optimized_content_score'].get('grade', 'F')})
+                                    </span>
+                                </div>
+                            </div>
+                            <div style="text-align: center; padding-top: 5px;">
+                                <span style="font-size: 16px;">Improvement:</span>
+                                <span style="font-size: 20px; color: {'green' if score_diff > 0 else 'red' if score_diff < 0 else 'gray'}; font-weight: bold; margin-left: 10px;">
+                                    {'+' if score_diff > 0 else ''}{score_diff} points
+                                </span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
                     # If we have a previously generated change summary, show tabs
                     if 'change_summary' in st.session_state.results:
                         prev_tabs = st.tabs(["Optimized Article", "Change Summary"])
@@ -3002,7 +4071,9 @@ def main():
                     if 'keyword' in st.session_state.results:
                         doc_stream = create_word_document_from_html(
                             st.session_state.results['optimized_content'],
-                            st.session_state.results['keyword']
+                            st.session_state.results['keyword'],
+                            st.session_state.results.get('change_summary', ''),
+                            st.session_state.results.get('optimized_content_score')
                         )
                         
                         st.download_button(
@@ -3016,6 +4087,20 @@ def main():
                 elif 'updated_doc' in st.session_state.results:
                     st.subheader("Previously Generated Update Recommendations")
                     
+                    # Display content score if available
+                    if 'existing_content_score' in st.session_state.results:
+                        score_data = st.session_state.results['existing_content_score']
+                        score = score_data.get('overall_score', 0)
+                        grade = score_data.get('grade', 'F')
+                        
+                        score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                        st.markdown(f"""
+                        <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                            <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                            <p>Implementing recommendations should significantly improve this score.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
                     # Download button for previously generated document
                     st.download_button(
                         label="Download Previous Update Recommendations",
@@ -3024,6 +4109,406 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         key="download_previous_updates"
                     )
+    
+    # Tab 7: Content Scoring (New Tab)
+    with tabs[6]:
+        st.header("Content Scoring & Optimization")
+        
+        if 'scraped_contents' not in st.session_state.results or 'keyword' not in st.session_state.results:
+            st.warning("Please fetch SERP data and analyze content first (in the 'Input & SERP Analysis' and 'Content Analysis' tabs)")
+        else:
+            # Check if we've already extracted terms
+            if 'term_data' not in st.session_state.results:
+                if st.button("Extract Important Terms"):
+                    if not openai_api_key:
+                        st.error("Please enter OpenAI API key")
+                    else:
+                        with st.spinner("Extracting important terms and topics from top-ranking content..."):
+                            start_time = time.time()
+                            
+                            term_data, success = extract_important_terms(
+                                st.session_state.results['scraped_contents'], 
+                                openai_api_key
+                            )
+                            
+                            if success and term_data:
+                                st.session_state.results['term_data'] = term_data
+                                
+                                # Show extracted terms
+                                st.subheader("Top Primary Terms")
+                                primary_df = pd.DataFrame(term_data.get('primary_terms', []))
+                                if not primary_df.empty:
+                                    st.dataframe(primary_df)
+                                
+                                st.subheader("Top Secondary Terms")
+                                secondary_df = pd.DataFrame(term_data.get('secondary_terms', []))
+                                if not secondary_df.empty:
+                                    st.dataframe(secondary_df)
+                                
+                                st.success(f"Term extraction completed in {format_time(time.time() - start_time)}")
+                            else:
+                                st.error("Failed to extract terms")
+            
+            else:
+                # Display previously extracted terms in a collapsible section
+                with st.expander("View Extracted Terms & Topics", expanded=False):
+                    st.subheader("Primary Terms")
+                    primary_df = pd.DataFrame(st.session_state.results['term_data'].get('primary_terms', []))
+                    if not primary_df.empty:
+                        st.dataframe(primary_df)
+                    
+                    st.subheader("Secondary Terms")
+                    secondary_df = pd.DataFrame(st.session_state.results['term_data'].get('secondary_terms', []))
+                    if not secondary_df.empty:
+                        st.dataframe(secondary_df)
+                    
+                    # Display topics if available
+                    if 'topics' in st.session_state.results['term_data']:
+                        st.subheader("Topics to Cover")
+                        topics_df = pd.DataFrame(st.session_state.results['term_data'].get('topics', []))
+                        if not topics_df.empty:
+                            st.dataframe(topics_df)
+                    
+                    # Display questions if available
+                    if 'questions' in st.session_state.results['term_data']:
+                        st.subheader("Questions to Answer")
+                        questions = st.session_state.results['term_data'].get('questions', [])
+                        for q in questions:
+                            st.write(f"- {q}")
+                
+                # Content input/editing area
+                st.subheader("Enter or Paste Your Content")
+                
+                # Initialize content in session state if needed
+                if 'current_content' not in st.session_state:
+                    # Use previously generated content if available
+                    if 'article_content' in st.session_state.results:
+                        # Strip HTML tags for the textarea
+                        soup = BeautifulSoup(st.session_state.results['article_content'], 'html.parser')
+                        plain_text = soup.get_text()
+                        st.session_state.current_content = plain_text
+                    else:
+                        st.session_state.current_content = ""
+                
+                # Function to update content in session state
+                def update_content():
+                    st.session_state.current_content = st.session_state.content_input
+                    # Clear previous scoring results when content changes
+                    if 'content_score' in st.session_state.results:
+                        del st.session_state.results['content_score']
+                    if 'highlighted_content' in st.session_state.results:
+                        del st.session_state.results['highlighted_content']
+                    if 'content_suggestions' in st.session_state.results:
+                        del st.session_state.results['content_suggestions']
+                
+                content_input = st.text_area(
+                    "Your content",
+                    value=st.session_state.current_content,
+                    height=400,
+                    key="content_input",
+                    on_change=update_content
+                )
+                
+                if st.button("Score Content"):
+                    if not st.session_state.current_content:
+                        st.error("Please enter content to score")
+                    else:
+                        with st.spinner("Scoring content..."):
+                            start_time = time.time()
+                            
+                            # Convert plain text to HTML for proper analysis
+                            content_html = f"<p>{st.session_state.current_content.replace('</p><p>', '</p>\n<p>').replace('\n\n', '</p>\n<p>').replace('\n', '<br>')}</p>"
+                            
+                            # Score the content
+                            score_data, score_success = score_content(
+                                content_html, 
+                                st.session_state.results['term_data'],
+                                st.session_state.results['keyword']
+                            )
+                            
+                            if score_success:
+                                st.session_state.results['content_score'] = score_data
+                                
+                                # Highlight keywords in content
+                                highlighted_content, highlight_success = highlight_keywords_in_content(
+                                    content_html,
+                                    st.session_state.results['term_data'],
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if highlight_success:
+                                    st.session_state.results['highlighted_content'] = highlighted_content
+                                
+                                # Get content improvement suggestions
+                                suggestions, suggestions_success = get_content_improvement_suggestions(
+                                    content_html,
+                                    st.session_state.results['term_data'],
+                                    score_data,
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if suggestions_success:
+                                    st.session_state.results['content_suggestions'] = suggestions
+                                
+                                st.success(f"Content scoring completed in {format_time(time.time() - start_time)}")
+                            else:
+                                st.error("Failed to score content")
+                
+                # Display content score if available
+                if 'content_score' in st.session_state.results:
+                    score_data = st.session_state.results['content_score']
+                    
+                    # Create score display with CSS styling
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    
+                    with col1:
+                        overall_score = score_data.get('overall_score', 0)
+                        st.markdown(f"""
+                        <div style="text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;">
+                            <h2 style="margin:0; font-size: 18px;">Overall Score</h2>
+                            <h1 style="margin:0; font-size: 48px; color: {'#28a745' if overall_score >= 70 else '#dc3545' if overall_score < 50 else '#ffc107'};">
+                                {overall_score}
+                            </h1>
+                            <p style="margin:0; font-size: 24px; font-weight: bold;">{score_data.get('grade', 'F')}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        component_scores = score_data.get('components', {})
+                        
+                        st.markdown(f"""
+                        <div style="padding: 10px; background-color: #f0f0f0; border-radius: 10px;">
+                            <h3 style="margin: 0 0 10px 0; font-size: 16px;">Component Scores</h3>
+                            <p style="margin: 0; font-size: 14px;">Primary Keyword: <strong>{component_scores.get('keyword_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Primary Terms: <strong>{component_scores.get('primary_terms_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Secondary Terms: <strong>{component_scores.get('secondary_terms_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Topic Coverage: <strong>{component_scores.get('topic_coverage_score', 0)}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Create score visualization using Altair or Matplotlib
+                    with col3:
+                        # Create score components data
+                        component_data = pd.DataFrame({
+                            'Component': [
+                                'Keyword Usage',
+                                'Primary Terms',
+                                'Secondary Terms',
+                                'Topic Coverage',
+                                'Questions'
+                            ],
+                            'Score': [
+                                component_scores.get('keyword_score', 0),
+                                component_scores.get('primary_terms_score', 0),
+                                component_scores.get('secondary_terms_score', 0),
+                                component_scores.get('topic_coverage_score', 0),
+                                component_scores.get('question_coverage_score', 0)
+                            ]
+                        })
+                        
+                        # Create a bar chart
+                        chart = alt.Chart(component_data).mark_bar().encode(
+                            x='Score',
+                            y=alt.Y('Component', sort=None),
+                            color=alt.condition(
+                                alt.datum.Score >= 70,
+                                alt.value('#28a745'),  # Green for good scores
+                                alt.condition(
+                                    alt.datum.Score >= 50,
+                                    alt.value('#ffc107'),  # Yellow for medium scores
+                                    alt.value('#dc3545')  # Red for poor scores
+                                )
+                            ),
+                            tooltip=['Component', 'Score']
+                        ).properties(
+                            title='Score Components',
+                            width=300,
+                            height=200
+                        )
+                        
+                        # Display the chart
+                        st.altair_chart(chart, use_container_width=True)
+                    
+                    # Display content details
+                    details = score_data.get('details', {})
+                    st.markdown(f"""
+                    <div style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
+                        <h3 style="margin-top: 0;">Content Details</h3>
+                        <p>Word Count: <strong>{details.get('word_count', 0)}</strong></p>
+                        <p>Primary Keyword Count: <strong>{details.get('keyword_count', 0)}/{details.get('optimal_keyword_count', 0)} (optimal)</strong></p>
+                        <p>Primary Terms Found: <strong>{details.get('primary_terms_found', 0)}/{details.get('primary_terms_total', 0)}</strong></p>
+                        <p>Secondary Terms Found: <strong>{details.get('secondary_terms_found', 0)}/{details.get('secondary_terms_total', 0)}</strong></p>
+                        <p>Topics Covered: <strong>{details.get('topics_covered', 0)}/{details.get('topics_total', 0)}</strong></p>
+                        <p>Questions Answered: <strong>{details.get('questions_answered', 0)}/{details.get('questions_total', 0)}</strong></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Display content with highlighted keywords
+                    if 'highlighted_content' in st.session_state.results:
+                        st.subheader("Content with Highlighted Keywords")
+                        st.markdown("""
+                        <div style="margin-bottom: 10px; font-size: 12px;">
+                            <span style="background-color: #FFEB9C; padding: 2px 5px;">Primary Keyword</span>
+                            <span style="background-color: #CDFFD8; padding: 2px 5px; margin-left: 10px;">Primary Terms</span>
+                            <span style="background-color: #E6F3FF; padding: 2px 5px; margin-left: 10px;">Secondary Terms</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div style="padding: 15px; border: 1px solid #ddd; border-radius: 5px; max-height: 400px; overflow-y: auto;">
+                            {st.session_state.results['highlighted_content']}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Display content improvement suggestions
+                    if 'content_suggestions' in st.session_state.results:
+                        suggestions = st.session_state.results['content_suggestions']
+                        
+                        st.subheader("Content Improvement Suggestions")
+                        
+                        # Tabs for different suggestion types
+                        suggestion_tabs = st.tabs([
+                            "Missing Terms", 
+                            "Content Gaps", 
+                            "Questions to Answer", 
+                            "Readability"
+                        ])
+                        
+                        # Missing Terms tab
+                        with suggestion_tabs[0]:
+                            st.markdown("### Missing and Underused Terms")
+                            
+                            # Missing primary terms
+                            missing_primary = [s for s in suggestions.get('missing_terms', []) if s.get('type') == 'primary']
+                            if missing_primary:
+                                st.markdown("#### Missing Primary Terms")
+                                for term in missing_primary:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f} - Recommended usage: {term.get('recommended_usage', 1)}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.success("No important primary terms are missing!")
+                            
+                            # Underused terms
+                            underused_terms = suggestions.get('underused_terms', [])
+                            if underused_terms:
+                                st.markdown("#### Underused Terms")
+                                for term in underused_terms:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Current usage: {term.get('current_usage')}/{term.get('recommended_usage')} recommended
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Missing secondary terms
+                            missing_secondary = [s for s in suggestions.get('missing_terms', []) if s.get('type') == 'secondary']
+                            if missing_secondary:
+                                st.markdown("#### Missing Secondary Terms")
+                                for term in missing_secondary:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f0f0f0; border-left: 3px solid #808080; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        
+                        # Content Gaps tab
+                        with suggestion_tabs[1]:
+                            st.markdown("### Content Topic Gaps")
+                            
+                            # Missing topics
+                            missing_topics = suggestions.get('missing_topics', [])
+                            if missing_topics:
+                                for topic in missing_topics:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 3px;">
+                                        <strong>Missing Topic: {topic.get('topic')}</strong>
+                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.success("Your content covers all the important topics!")
+                        
+                        # Questions tab
+                        with suggestion_tabs[2]:
+                            st.markdown("### Questions to Answer")
+                            
+                            # Unanswered questions
+                            unanswered = suggestions.get('unanswered_questions', [])
+                            if unanswered:
+                                for i, question in enumerate(unanswered, 1):
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e8f5e9; border-left: 3px solid #4caf50; border-radius: 3px;">
+                                        <strong>{i}. {question}</strong>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.success("Your content answers all the important questions!")
+                        
+                        # Readability tab
+                        with suggestion_tabs[3]:
+                            st.markdown("### Readability & Structure Suggestions")
+                            
+                            # Readability suggestions
+                            readability = suggestions.get('readability_suggestions', [])
+                            if readability:
+                                for suggestion in readability:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f3e5f5; border-left: 3px solid #9c27b0; border-radius: 3px;">
+                                        {suggestion}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Structure suggestions
+                            structure = suggestions.get('structure_suggestions', [])
+                            if structure:
+                                for suggestion in structure:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fce4ec; border-left: 3px solid #e91e63; border-radius: 3px;">
+                                        {suggestion}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            if not readability and not structure:
+                                st.success("Your content has good readability and structure!")
+                    
+                    # Add download buttons for reports
+                    st.subheader("Download Reports")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Create and offer content brief for download
+                        brief_doc = create_content_scoring_brief(
+                            st.session_state.results['keyword'],
+                            st.session_state.results['term_data'],
+                            score_data,
+                            st.session_state.results.get('content_suggestions', {})
+                        )
+                        
+                        st.download_button(
+                            label="Download Content Optimization Brief",
+                            data=brief_doc,
+                            file_name=f"content_optimization_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    
+                    with col2:
+                        # Create and offer highlighted content document for download
+                        if 'highlighted_content' in st.session_state.results:
+                            highlighted_doc = create_word_document_from_html(
+                                st.session_state.results['highlighted_content'],
+                                st.session_state.results['keyword'] + " - Highlighted Terms",
+                                ""
+                            )
+                            
+                            st.download_button(
+                                label="Download Highlighted Content",
+                                data=highlighted_doc,
+                                file_name=f"highlighted_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
 
 if __name__ == "__main__":
     main()
