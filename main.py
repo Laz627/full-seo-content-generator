@@ -697,20 +697,55 @@ def score_content(content: str, term_data: Dict, keyword: str) -> Tuple[Dict, bo
                         
             secondary_terms_score = (secondary_term_found / secondary_terms_total) * 100
         
-        # Score topic coverage
+       # Score topic coverage - IMPROVED SEMANTIC DETECTION
         topics_covered = 0
         topics_total = len(term_data.get('topics', []))
         topic_coverage = {}
         
         if topics_total > 0:
+            content_lower = content.lower()
+            
             for topic_data in term_data.get('topics', []):
                 topic = topic_data.get('topic', '')
+                description = topic_data.get('description', '')
+                
                 if topic:
-                    is_covered = topic.lower() in content.lower()
+                    # Extract key terms from both topic and its description
+                    topic_terms = set(re.findall(r'\b\w{3,}\b', topic.lower()))
+                    if description:
+                        desc_terms = set(re.findall(r'\b\w{3,}\b', description.lower()))
+                        # Combine important terms
+                        key_terms = topic_terms.union(desc_terms)
+                    else:
+                        key_terms = topic_terms
+                    
+                    # Remove common words that aren't meaningful for matching
+                    common_words = {'the', 'and', 'for', 'that', 'with', 'this', 'what', 'how', 
+                                   'why', 'when', 'where', 'will', 'can', 'your', 'you', 'these',
+                                   'those', 'them', 'they', 'some', 'have', 'has', 'had', 'are',
+                                   'our', 'their', 'were', 'was', 'not', 'from', 'about'}
+                    
+                    key_terms = {term for term in key_terms if term not in common_words and len(term) > 2}
+                    
+                    # Calculate what percentage of key terms are found
+                    if key_terms:
+                        found_terms = sum(1 for term in key_terms if term in content_lower)
+                        match_ratio = found_terms / len(key_terms)
+                        
+                        # Consider covered if enough key terms are found or exact match
+                        is_covered = match_ratio >= 0.4 or topic.lower() in content_lower
+                    else:
+                        # Fall back to exact matching if no key terms
+                        is_covered = topic.lower() in content_lower
+                        match_ratio = 1.0 if is_covered else 0.0
+                    
                     topic_coverage[topic] = {
                         'covered': is_covered,
-                        'description': topic_data.get('description', '')
+                        'match_ratio': match_ratio,
+                        'description': description,
+                        'terms_found': match_ratio if key_terms else 0
                     }
+                    
                     if is_covered:
                         topics_covered += 1
             
