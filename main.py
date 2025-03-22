@@ -697,7 +697,7 @@ def score_content(content: str, term_data: Dict, keyword: str) -> Tuple[Dict, bo
                         
             secondary_terms_score = (secondary_term_found / secondary_terms_total) * 100
         
-       # Score topic coverage - IMPROVED SEMANTIC DETECTION
+        # Score topic coverage - IMPROVED SEMANTIC DETECTION
         topics_covered = 0
         topics_total = len(term_data.get('topics', []))
         topic_coverage = {}
@@ -902,6 +902,7 @@ def get_content_improvement_suggestions(content: str, term_data: Dict, score_dat
             'missing_terms': [],
             'underused_terms': [],
             'missing_topics': [],
+            'partial_topics': [],  # New category for partially covered topics
             'unanswered_questions': [],
             'readability_suggestions': [],
             'structure_suggestions': []
@@ -951,16 +952,43 @@ def get_content_improvement_suggestions(content: str, term_data: Dict, score_dat
                         'current_usage': 0
                     })
         
-        # Check for missing topics
+        # Check for missing or partially covered topics
+        topic_coverage = score_data.get('details', {}).get('topic_coverage', {})
+        
         for topic_info in term_data.get('topics', []):
             topic = topic_info.get('topic', '')
             description = topic_info.get('description', '')
             
-            if topic and topic.lower() not in content.lower():
-                suggestions['missing_topics'].append({
-                    'topic': topic,
-                    'description': description
-                })
+            if topic:
+                if topic in topic_coverage:
+                    # Get coverage data from score results
+                    coverage_info = topic_coverage[topic]
+                    is_covered = coverage_info.get('covered', False)
+                    match_ratio = coverage_info.get('match_ratio', 0)
+                    
+                    # Fully covered topics (70%+ match) need no suggestions
+                    if match_ratio >= 0.7:
+                        continue
+                    # Partially covered topics (40-69% match) need enhancement
+                    elif is_covered:
+                        suggestions['partial_topics'].append({
+                            'topic': topic,
+                            'description': description,
+                            'match_ratio': match_ratio,
+                            'suggestion': f"Expand your coverage of {topic}. Currently at {int(match_ratio * 100)}% coverage."
+                        })
+                    # Missing topics (less than 40% match) need to be added
+                    else:
+                        suggestions['missing_topics'].append({
+                            'topic': topic,
+                            'description': description
+                        })
+                else:
+                    # Fallback if topic not found in coverage data
+                    suggestions['missing_topics'].append({
+                        'topic': topic,
+                        'description': description
+                    })
         
         # Check for unanswered questions
         for question in term_data.get('questions', []):
@@ -4454,12 +4482,13 @@ def main():
                                     """, unsafe_allow_html=True)
                         
                         # Content Gaps tab
-                        with suggestion_tabs[1]:
+                         with suggestion_tabs[1]:
                             st.markdown("### Content Topic Gaps")
                             
-                            # Missing topics
+                            # Missing topics (completely missing)
                             missing_topics = suggestions.get('missing_topics', [])
                             if missing_topics:
+                                st.markdown("#### Topics to Add")
                                 for topic in missing_topics:
                                     st.markdown(f"""
                                     <div style="margin-bottom: 10px; padding: 10px; background-color: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 3px;">
@@ -4467,8 +4496,23 @@ def main():
                                         <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
                                     </div>
                                     """, unsafe_allow_html=True)
-                            else:
-                                st.success("Your content covers all the important topics!")
+                            
+                            # Partially covered topics (need enhancement)
+                            partial_topics = suggestions.get('partial_topics', [])
+                            if partial_topics:
+                                st.markdown("#### Topics to Expand")
+                                for topic in partial_topics:
+                                    match_ratio = topic.get('match_ratio', 0)
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
+                                        <strong>Enhance Coverage: {topic.get('topic')}</strong> ({int(match_ratio * 100)}% covered)
+                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
+                                        <p style="margin: 5px 0 0 0; font-style: italic;">{topic.get('suggestion', '')}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            if not missing_topics and not partial_topics:
+                                st.success("Your content covers all the important topics comprehensively!")
                         
                         # Questions tab
                         with suggestion_tabs[2]:
