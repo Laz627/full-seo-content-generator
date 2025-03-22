@@ -638,17 +638,25 @@ def score_content(content: str, term_data: Dict, keyword: str) -> Tuple[Dict, bo
         topic_coverage_score = 0
         question_coverage_score = 0
         
-        # Score primary keyword usage
-        keyword_count = len(re.findall(r'\b' + re.escape(keyword.lower()) + r'\b', content.lower()))
-        word_count = len(re.findall(r'\b\w+\b', content))
-        optimal_keyword_count = max(2, min(10, int(word_count * 0.01)))  # Between 0.5% and 2%
-        
-        # Calculate keyword score (max 100)
-        if keyword_count > 0:
-            if keyword_count <= optimal_keyword_count:
-                keyword_score = (keyword_count / optimal_keyword_count) * 100
+    # Score primary keyword usage
+    keyword_count = len(re.findall(r'\b' + re.escape(keyword.lower()) + r'\b', content.lower()))
+    word_count = len(re.findall(r'\b\w+\b', content))
+    optimal_keyword_count = max(2, min(10, int(word_count * 0.01)))  # Between 0.5% and 2%
+    
+    # Calculate keyword score (max 100)
+    if keyword_count > 0:
+        if keyword_count <= optimal_keyword_count:
+            # Perfect score when usage is at or below optimal
+            keyword_score = (keyword_count / optimal_keyword_count) * 100
+        else:
+            # More generous penalty for overuse - starts penalizing after 1.5x optimal
+            excessive_ratio = keyword_count / optimal_keyword_count
+            if excessive_ratio <= 1.5:  # Allow up to 150% of optimal without penalty
+                keyword_score = 100
             else:
-                keyword_score = max(50, 100 - ((keyword_count - optimal_keyword_count) / optimal_keyword_count * 50))
+                # Scale penalty more gradually
+                penalty = (excessive_ratio - 1.5) * 25  # Only 25% reduction per 100% over the 1.5x threshold
+                keyword_score = max(60, 100 - penalty)  # Floor of 60%
         
         # Score primary terms
         primary_term_found = 0
