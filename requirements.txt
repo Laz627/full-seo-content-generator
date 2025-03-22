@@ -7,3 +7,4 @@ trafilatura
 openai==0.28
 python-docx
 openpyxl
+matplotlib.pyplot
