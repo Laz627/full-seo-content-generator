@@ -4482,7 +4482,7 @@ def main():
                                     """, unsafe_allow_html=True)
                         
                         # Content Gaps tab
-                         with suggestion_tabs[1]:
+                        with suggestion_tabs[1]:
                             st.markdown("### Content Topic Gaps")
                             
                             # Missing topics (completely missing)
