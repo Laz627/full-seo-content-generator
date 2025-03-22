@@ -4306,17 +4306,22 @@ def main():
                             ]
                         })
                         
-                        # Create a bar chart
+                        # Add a color category column to the dataframe
+                        component_data['Color Category'] = pd.cut(
+                            component_data['Score'],
+                            bins=[0, 49.99, 69.99, 100],
+                            labels=['Poor', 'Medium', 'Good']
+                        )
+                        
+                        # Create a bar chart with color based on the category
                         chart = alt.Chart(component_data).mark_bar().encode(
                             x='Score',
                             y=alt.Y('Component', sort=None),
-                            color=alt.condition(
-                                alt.datum.Score >= 70,
-                                alt.value('#28a745'),  # Green for good scores
-                                alt.condition(
-                                    alt.datum.Score >= 50,
-                                    alt.value('#ffc107'),  # Yellow for medium scores
-                                    alt.value('#dc3545')  # Red for poor scores
+                            color=alt.Color(
+                                'Color Category:N',
+                                scale=alt.Scale(
+                                    domain=['Poor', 'Medium', 'Good'],
+                                    range=['#dc3545', '#ffc107', '#28a745']
                                 )
                             ),
                             tooltip=['Component', 'Score']
