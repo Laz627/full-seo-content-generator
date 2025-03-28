@@ -4404,28 +4404,24 @@ def main():
                     
                     with col1:
                         overall_score = score_data.get('overall_score', 0)
-                        st.markdown(f"""
-                        <div style="text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;">
-                            <h2 style="margin:0; font-size: 18px;">Overall Score</h2>
-                            <h1 style="margin:0; font-size: 48px; color: {'#28a745' if overall_score >= 70 else '#dc3545' if overall_score < 50 else '#ffc107'};">
-                                {overall_score}
-                            </h1>
-                            <p style="margin:0; font-size: 24px; font-weight: bold;">{score_data.get('grade', 'F')}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        score_color = '#28a745' if overall_score >= 70 else '#dc3545' if overall_score < 50 else '#ffc107'
+                        html = f"<div style='text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;'>"
+                        html += f"<h2 style='margin:0; font-size: 18px;'>Overall Score</h2>"
+                        html += f"<h1 style='margin:0; font-size: 48px; color: {score_color};'>{overall_score}</h1>"
+                        html += f"<p style='margin:0; font-size: 24px; font-weight: bold;'>{score_data.get('grade', 'F')}</p>"
+                        html += "</div>"
+                        st.markdown(html, unsafe_allow_html=True)
                     
                     with col2:
                         component_scores = score_data.get('components', {})
-                        
-                        st.markdown(f"""
-                        <div style="padding: 10px; background-color: #f0f0f0; border-radius: 10px;">
-                            <h3 style="margin: 0 0 10px 0; font-size: 16px;">Component Scores</h3>
-                            <p style="margin: 0; font-size: 14px;">Primary Keyword: <strong>{component_scores.get('keyword_score', 0)}</strong></p>
-                            <p style="margin: 0; font-size: 14px;">Primary Terms: <strong>{component_scores.get('primary_terms_score', 0)}</strong></p>
-                            <p style="margin: 0; font-size: 14px;">Secondary Terms: <strong>{component_scores.get('secondary_terms_score', 0)}</strong></p>
-                            <p style="margin: 0; font-size: 14px;">Topic Coverage: <strong>{component_scores.get('topic_coverage_score', 0)}</strong></p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        html = f"<div style='padding: 10px; background-color: #f0f0f0; border-radius: 10px;'>"
+                        html += f"<h3 style='margin: 0 0 10px 0; font-size: 16px;'>Component Scores</h3>"
+                        html += f"<p style='margin: 0; font-size: 14px;'>Primary Keyword: <strong>{component_scores.get('keyword_score', 0)}</strong></p>"
+                        html += f"<p style='margin: 0; font-size: 14px;'>Primary Terms: <strong>{component_scores.get('primary_terms_score', 0)}</strong></p>"
+                        html += f"<p style='margin: 0; font-size: 14px;'>Secondary Terms: <strong>{component_scores.get('secondary_terms_score', 0)}</strong></p>"
+                        html += f"<p style='margin: 0; font-size: 14px;'>Topic Coverage: <strong>{component_scores.get('topic_coverage_score', 0)}</strong></p>"
+                        html += "</div>"
+                        st.markdown(html, unsafe_allow_html=True)
                     
                     # Create score visualization using Altair or Matplotlib
                     with col3:
@@ -4477,34 +4473,31 @@ def main():
                     
                     # Display content details
                     details = score_data.get('details', {})
-                    st.markdown(f"""
-                    <div style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
-                        <h3 style="margin-top: 0;">Content Details</h3>
-                        <p>Word Count: <strong>{details.get('word_count', 0)}</strong></p>
-                        <p>Primary Keyword Count: <strong>{details.get('keyword_count', 0)}/{details.get('optimal_keyword_count', 0)} (optimal)</strong></p>
-                        <p>Primary Terms Found: <strong>{details.get('primary_terms_found', 0)}/{details.get('primary_terms_total', 0)}</strong></p>
-                        <p>Secondary Terms Found: <strong>{details.get('secondary_terms_found', 0)}/{details.get('secondary_terms_total', 0)}</strong></p>
-                        <p>Topics Covered: <strong>{details.get('topics_covered', 0)}/{details.get('topics_total', 0)}</strong></p>
-                        <p>Questions Answered: <strong>{details.get('questions_answered', 0)}/{details.get('questions_total', 0)}</strong></p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    html = f"<div style='margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 5px;'>"
+                    html += f"<h3 style='margin-top: 0;'>Content Details</h3>"
+                    html += f"<p>Word Count: <strong>{details.get('word_count', 0)}</strong></p>"
+                    html += f"<p>Primary Keyword Count: <strong>{details.get('keyword_count', 0)}/{details.get('optimal_keyword_count', 0)} (optimal)</strong></p>"
+                    html += f"<p>Primary Terms Found: <strong>{details.get('primary_terms_found', 0)}/{details.get('primary_terms_total', 0)}</strong></p>"
+                    html += f"<p>Secondary Terms Found: <strong>{details.get('secondary_terms_found', 0)}/{details.get('secondary_terms_total', 0)}</strong></p>"
+                    html += f"<p>Topics Covered: <strong>{details.get('topics_covered', 0)}/{details.get('topics_total', 0)}</strong></p>"
+                    html += f"<p>Questions Answered: <strong>{details.get('questions_answered', 0)}/{details.get('questions_total', 0)}</strong></p>"
+                    html += "</div>"
+                    st.markdown(html, unsafe_allow_html=True)
                     
                     # Display content with highlighted keywords
                     if 'highlighted_content' in st.session_state.results:
                         st.subheader("Content with Highlighted Keywords")
-                        st.markdown("""
-                        <div style="margin-bottom: 10px; font-size: 12px;">
-                            <span style="background-color: #FFEB9C; padding: 2px 5px;">Primary Keyword</span>
-                            <span style="background-color: #CDFFD8; padding: 2px 5px; margin-left: 10px;">Primary Terms</span>
-                            <span style="background-color: #E6F3FF; padding: 2px 5px; margin-left: 10px;">Secondary Terms</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        html = "<div style='margin-bottom: 10px; font-size: 12px;'>"
+                        html += "<span style='background-color: #FFEB9C; padding: 2px 5px;'>Primary Keyword</span>"
+                        html += "<span style='background-color: #CDFFD8; padding: 2px 5px; margin-left: 10px;'>Primary Terms</span>"
+                        html += "<span style='background-color: #E6F3FF; padding: 2px 5px; margin-left: 10px;'>Secondary Terms</span>"
+                        html += "</div>"
+                        st.markdown(html, unsafe_allow_html=True)
                         
-                        st.markdown(f"""
-                        <div style="padding: 15px; border: 1px solid #ddd; border-radius: 5px; max-height: 400px; overflow-y: auto;">
-                            {st.session_state.results['highlighted_content']}
-                        </div>
-                        """, unsafe_allow_html=True)
+                        html = f"<div style='padding: 15px; border: 1px solid #ddd; border-radius: 5px; max-height: 400px; overflow-y: auto;'>"
+                        html += f"{st.session_state.results['highlighted_content']}"
+                        html += "</div>"
+                        st.markdown(html, unsafe_allow_html=True)
                     
                     # Display content improvement suggestions
                     if 'content_suggestions' in st.session_state.results:
@@ -4581,8 +4574,9 @@ def main():
                                 st.markdown("#### Topics to Expand")
                                 for topic in partial_topics:
                                     match_ratio = topic.get('match_ratio', 0)
+                                    match_percent = int(match_ratio * 100)
                                     html = f"<div style='margin-bottom: 10px; padding: 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;'>"
-                                    html += f"<strong>Enhance Coverage: {topic.get('topic')}</strong> ({int(match_ratio * 100)}% covered)"
+                                    html += f"<strong>Enhance Coverage: {topic.get('topic')}</strong> ({match_percent}% covered)"
                                     html += f"<p style='margin: 5px 0 0 0;'>{topic.get('description', '')}</p>"
                                     html += f"<p style='margin: 5px 0 0 0; font-style: italic;'>{topic.get('suggestion', '')}</p>"
                                     html += "</div>"
@@ -4651,6 +4645,22 @@ def main():
                             file_name=f"content_optimization_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
+                    
+                    with col2:
+                        # Create and offer highlighted content document for download
+                        if 'highlighted_content' in st.session_state.results:
+                            highlighted_doc = create_word_document_from_html(
+                                st.session_state.results['highlighted_content'],
+                                st.session_state.results['keyword'] + " - Highlighted Terms",
+                                ""
+                            )
+                            
+                            st.download_button(
+                                label="Download Highlighted Content",
+                                data=highlighted_doc,
+                                file_name=f"highlighted_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
                     
                     with col2:
                         # Create and offer highlighted content document for download
