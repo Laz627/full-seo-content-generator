@@ -3166,144 +3166,39 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         logger.error(traceback.format_exc())
         return "", "", False
 
-def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
-                        semantic_structure: Dict, article_content: str, meta_title: str, 
-                        meta_description: str, paa_questions: List[Dict], term_data: Dict = None,
-                        score_data: Dict = None, internal_links: List[Dict] = None, 
-                        guidance_only: bool = False) -> Tuple[BytesIO, bool]:
+def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "", 
+                                  score_data: Dict = None) -> BytesIO:
     """
-    Create Word document with all components including content score if available
-    Returns: document_stream, success_status
+    Enhanced document creation with content score information
+    Returns: document_stream
     """
     try:
         doc = Document()
         
         # Add document title
-        doc.add_heading(f'SEO Brief: {keyword}', 0)
+        title = doc.add_heading(f'Optimized Content: {keyword}', 0)
+        title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
         
         # Add date
-        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        date_para = doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        date_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
         
-        # Add meta title and description
-        doc.add_heading('Meta Tags', level=1)
-        meta_paragraph = doc.add_paragraph()
-        meta_paragraph.add_run("Meta Title: ").bold = True
-        meta_paragraph.add_run(meta_title)
+        # Add horizontal line
+        doc.add_paragraph("_" * 50)
         
-        desc_paragraph = doc.add_paragraph()
-        desc_paragraph.add_run("Meta Description: ").bold = True
-        desc_paragraph.add_run(meta_description)
-        
-        # Section 1: SERP Analysis
-        doc.add_heading('SERP Analysis', level=1)
-        doc.add_paragraph('Top 10 Organic Results:')
-        
-        table = doc.add_table(rows=1, cols=4)
-        table.style = 'Table Grid'
-        
-        # Add header row
-        header_cells = table.rows[0].cells
-        header_cells[0].text = 'Rank'
-        header_cells[1].text = 'Title'
-        header_cells[2].text = 'URL'
-        header_cells[3].text = 'Page Type'
-        
-        # Add data rows
-        for result in serp_results:
-            row_cells = table.add_row().cells
-            row_cells[0].text = str(result.get('rank_group', ''))
-            row_cells[1].text = result.get('title', '')
-            row_cells[2].text = result.get('url', '')
-            row_cells[3].text = result.get('page_type', '')
-        
-        # Add People Also Asked questions
-        if paa_questions:
-            doc.add_heading('People Also Asked', level=2)
-            for i, question in enumerate(paa_questions, 1):
-                q_paragraph = doc.add_paragraph(style='List Number')
-                q_paragraph.add_run(question.get('question', '')).bold = True
-                
-                # Add expanded answers if available
-                for expanded in question.get('expanded', []):
-                    if expanded.get('description'):
-                        doc.add_paragraph(expanded.get('description', ''), style='List Bullet')
-        
-        # Section 2: Related Keywords
-        doc.add_heading('Related Keywords', level=1)
-        
-        kw_table = doc.add_table(rows=1, cols=3)
-        kw_table.style = 'Table Grid'
-        
-        # Add header row
-        kw_header_cells = kw_table.rows[0].cells
-        kw_header_cells[0].text = 'Keyword'
-        kw_header_cells[1].text = 'Search Volume'
-        kw_header_cells[2].text = 'CPC ($)'
-        
-        # Add data rows with safe handling of values
-        for kw in related_keywords:
-            row_cells = kw_table.add_row().cells
-            row_cells[0].text = kw.get('keyword', '')
-            
-            # Safe handling of search volume
-            search_volume = kw.get('search_volume')
-            row_cells[1].text = str(search_volume if search_volume is not None else 0)
-            
-            # Safe handling of CPC
-            cpc_value = kw.get('cpc')
-            if cpc_value is None:
-                row_cells[2].text = "$0.00"
-            else:
-                try:
-                    row_cells[2].text = f"${float(cpc_value):.2f}"
-                except (ValueError, TypeError):
-                    # Handle case where CPC might be a string or other non-numeric value
-                    row_cells[2].text = "$0.00"
-        
-        # Section 3: Important Terms (if available)
-        if term_data:
-            doc.add_heading('Important Terms to Include', level=1)
-            
-            # Primary Terms
-            doc.add_heading('Primary Terms', level=2)
-            primary_table = doc.add_table(rows=1, cols=3)
-            primary_table.style = 'Table Grid'
-            
-            header_cells = primary_table.rows[0].cells
-            header_cells[0].text = 'Term'
-            header_cells[1].text = 'Importance'
-            header_cells[2].text = 'Recommended Usage'
-            
-            for term in term_data.get('primary_terms', []):
-                row_cells = primary_table.add_row().cells
-                row_cells[0].text = term.get('term', '')
-                row_cells[1].text = f"{term.get('importance', 0):.2f}"
-                row_cells[2].text = str(term.get('recommended_usage', 1))
-            
-            # Secondary Terms
-            doc.add_heading('Secondary Terms', level=2)
-            secondary_table = doc.add_table(rows=1, cols=2)
-            secondary_table.style = 'Table Grid'
-            
-            header_cells = secondary_table.rows[0].cells
-            header_cells[0].text = 'Term'
-            header_cells[1].text = 'Importance'
-            
-            for term in term_data.get('secondary_terms', [])[:15]:  # Limit to top 15
-                row_cells = secondary_table.add_row().cells
-                row_cells[0].text = term.get('term', '')
-                row_cells[1].text = f"{term.get('importance', 0):.2f}"
-        
-        # Section 4: Content Score (if available)
+        # Add content score if available
         if score_data:
-            doc.add_heading('Content Score', level=1)
+            doc.add_heading("Content Score", 1)
             
-            score_paragraph = doc.add_paragraph()
-            score_paragraph.add_run(f"Overall Score: ").bold = True
-            score_run = score_paragraph.add_run(f"{score_data.get('overall_score', 0)} - {score_data.get('grade', 'F')}")
+            score_para = doc.add_paragraph()
+            score_para.add_run(f"Overall Score: ").bold = True
+            
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            
+            score_run = score_para.add_run(f"{overall_score} ({grade})")
             
             # Color the score based on value
-            overall_score = score_data.get('overall_score', 0)
             if overall_score >= 70:
                 score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
             elif overall_score < 50:
@@ -3312,139 +3207,148 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
             
             # Component scores
-            doc.add_heading('Score Components', level=2)
             components = score_data.get('components', {})
-            
-            for component, value in components.items():
+            for component, score in components.items():
                 component_para = doc.add_paragraph(style='List Bullet')
                 component_name = component.replace('_score', '').replace('_', ' ').title()
                 component_para.add_run(f"{component_name}: ").bold = True
-                component_para.add_run(f"{value}")
-        
-        # Section 5: Semantic Structure
-        doc.add_heading('Recommended Content Structure', level=1)
-        
-        doc.add_paragraph(f"Recommended H1: {semantic_structure.get('h1', '')}")
-        
-        for i, section in enumerate(semantic_structure.get('sections', []), 1):
-            doc.add_paragraph(f"H2 Section {i}: {section.get('h2', '')}")
+                component_para.add_run(f"{score}")
             
-            for j, subsection in enumerate(section.get('subsections', []), 1):
-                doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
+            # Add separator
+            doc.add_paragraph("_" * 50)
         
-        # Section 6: Generated Article or Guidance
-        doc.add_heading('Generated Article Content', level=1)
-        
-        # IMPROVED: Better HTML parsing to correctly include all heading levels
-        if article_content and isinstance(article_content, str):
-            # Parse HTML content with Beautiful Soup
-            soup = BeautifulSoup(article_content, 'html.parser')
+        # Add change summary if provided
+        if change_summary:
+            doc.add_heading("Optimization Summary", 1)
             
-            # Find all the heading and content elements
-            elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol'])
+            # Parse HTML summary
+            summary_soup = BeautifulSoup(change_summary, 'html.parser')
             
-            for element in elements:
-                # Process headings
-                if element.name.startswith('h') and len(element.name) == 2:
-                    try:
-                        # Extract the heading level and text
-                        level = int(element.name[1])
-                        heading_text = element.get_text().strip()
-                        
-                        # Add the heading to the document
-                        if heading_text:
-                            doc.add_heading(heading_text, level=level)
-                    except (ValueError, IndexError) as e:
-                        # Fallback if we can't parse the heading properly
-                        doc.add_paragraph(element.get_text()).bold = True
+            # Extract key points
+            for h3 in summary_soup.find_all('h3'):
+                doc.add_heading(h3.get_text(), 2)
                 
-                # Process paragraphs
-                elif element.name == 'p':
-                    p = doc.add_paragraph()
+                # Get the list that follows this heading
+                ul = h3.find_next('ul')
+                if ul:
+                    for li in ul.find_all('li'):
+                        doc.add_paragraph(li.get_text(), style='List Bullet')
+            
+            # Add separator before main content
+            doc.add_paragraph()
+            doc.add_paragraph("_" * 50)
+            doc.add_paragraph()
+        
+        # Add content heading
+        doc.add_heading("Optimized Content", 1)
+        
+        # IMPROVED: Better HTML content parsing to preserve all headings and structure
+        if html_content and isinstance(html_content, str):
+            try:
+                # Parse HTML content with Beautiful Soup
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                # First add the H1 title if it exists
+                h1_tags = soup.find_all('h1')
+                if h1_tags:
+                    h1_text = h1_tags[0].get_text().strip()
+                    if h1_text:
+                        heading = doc.add_heading(h1_text, level=1)
+                        heading.runs[0].font.size = Pt(16)
+                        heading.runs[0].bold = True
+                
+                # Process all elements in order to maintain document structure
+                elements = soup.body.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol'], recursive=True) if soup.body else soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol'])
+                
+                for element in elements:
+                    # Skip h1 as we've already processed it
+                    if element.name == 'h1':
+                        continue
                     
-                    # Process paragraph content including links
-                    for content in element.contents:
-                        if isinstance(content, str):
-                            # Plain text
-                            p.add_run(content)
-                        elif content.name == 'a':
-                            # Add link as hyperlinked text with blue color
-                            url = content.get('href', '')
-                            text = content.get_text()
-                            if url and text:
-                                run = p.add_run(text)
-                                run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
-                                run.underline = True
-                        else:
-                            # Other tags
-                            p.add_run(content.get_text())
+                    # Process headings
+                    elif element.name in ['h2', 'h3', 'h4', 'h5', 'h6']:
+                        level = int(element.name[1])
+                        text = element.get_text().strip()
+                        if text:
+                            heading = doc.add_heading(text, level=level)
+                            
+                            # Style the heading based on level
+                            if level == 2:
+                                heading.runs[0].font.size = Pt(14)
+                                heading.runs[0].bold = True
+                            elif level == 3:
+                                heading.runs[0].font.size = Pt(12)
+                                heading.runs[0].bold = True
+                                heading.runs[0].italic = True
+                            elif level >= 4:
+                                heading.runs[0].font.size = Pt(11)
+                                heading.runs[0].bold = True
+                                heading.runs[0].italic = True
+                    
+                    # Process paragraphs
+                    elif element.name == 'p':
+                        text = element.get_text().strip()
+                        if text:
+                            doc.add_paragraph(text)
+                    
+                    # Process unordered lists
+                    elif element.name == 'ul':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Bullet')
+                    
+                    # Process ordered lists
+                    elif element.name == 'ol':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Number')
+            
+            except Exception as e:
+                # Fallback to simpler parsing if the detailed approach fails
+                logger.error(f"Error in HTML parsing: {e}")
                 
-                # Process unordered lists
-                elif element.name == 'ul':
-                    for li in element.find_all('li'):
-                        p = doc.add_paragraph(style='List Bullet')
-                        for content in li.contents:
-                            if isinstance(content, str):
-                                p.add_run(content)
-                            elif content.name == 'a':
-                                url = content.get('href', '')
-                                text = content.get_text()
-                                if url and text:
-                                    run = p.add_run(text)
-                                    run.font.color.rgb = RGBColor(0, 0, 255)
-                                    run.underline = True
-                            else:
-                                p.add_run(content.get_text())
+                # Try a simpler approach
+                soup = BeautifulSoup(html_content, 'html.parser')
                 
-                # Process ordered lists
-                elif element.name == 'ol':
-                    for li in element.find_all('li'):
-                        p = doc.add_paragraph(style='List Number')
-                        for content in li.contents:
-                            if isinstance(content, str):
-                                p.add_run(content)
-                            elif content.name == 'a':
-                                url = content.get('href', '')
-                                text = content.get_text()
-                                if url and text:
-                                    run = p.add_run(text)
-                                    run.font.color.rgb = RGBColor(0, 0, 255)
-                                    run.underline = True
-                            else:
-                                p.add_run(content.get_text())
-        
-        # Section 7: Internal Linking (if provided)
-        if internal_links:
-            doc.add_heading('Internal Linking Summary', level=1)
-            
-            link_table = doc.add_table(rows=1, cols=3)
-            link_table.style = 'Table Grid'
-            
-            # Add header row
-            link_header_cells = link_table.rows[0].cells
-            link_header_cells[0].text = 'URL'
-            link_header_cells[1].text = 'Anchor Text'
-            link_header_cells[2].text = 'Context'
-            
-            # Add data rows
-            for link in internal_links:
-                row_cells = link_table.add_row().cells
-                row_cells[0].text = link.get('url', '')
-                row_cells[1].text = link.get('anchor_text', '')
-                row_cells[2].text = link.get('context', '')
+                # Process headings first
+                for i, tag_name in enumerate(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    for heading in soup.find_all(tag_name):
+                        text = heading.get_text().strip()
+                        if text:
+                            level = i + 1  # h1 = 1, h2 = 2, etc.
+                            doc.add_heading(text, level=level)
+                
+                # Process paragraphs and lists
+                for p in soup.find_all('p'):
+                    text = p.get_text().strip()
+                    if text:
+                        doc.add_paragraph(text)
+                
+                for ul in soup.find_all('ul'):
+                    for li in ul.find_all('li'):
+                        text = li.get_text().strip()
+                        if text:
+                            doc.add_paragraph(text, style='List Bullet')
+                
+                for ol in soup.find_all('ol'):
+                    for li in ol.find_all('li'):
+                        text = li.get_text().strip()
+                        if text:
+                            doc.add_paragraph(text, style='List Number')
         
         # Save document to memory stream
         doc_stream = BytesIO()
         doc.save(doc_stream)
         doc_stream.seek(0)
         
-        return doc_stream, True
+        return doc_stream
     
     except Exception as e:
-        error_msg = f"Exception in create_word_document: {str(e)}"
+        error_msg = f"Exception in create_word_document_from_html: {str(e)}"
         logger.error(error_msg)
-        logger.error(traceback.format_exc())
-        return BytesIO(), False
+        return BytesIO()
 
 ###############################################################################
 # 12. Main Streamlit App
