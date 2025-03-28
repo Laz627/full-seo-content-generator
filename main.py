@@ -2142,74 +2142,96 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # FIX: Direct approach using BeautifulSoup to process HTML in proper order
+        # COMPLETELY REVISED: Use regex to extract and process HTML elements in document order
         if article_content and isinstance(article_content, str):
-            # Check if content contains HTML
-            if '<' in article_content and '>' in article_content:
-                # Parse the HTML
-                soup = BeautifulSoup(article_content, 'html.parser')
+            # Log the content length for debugging
+            logger.info(f"Article content length: {len(article_content)} characters")
+            
+            # Use regular expressions to extract headings and paragraphs
+            heading_pattern = re.compile(r'<h([1-6])[^>]*>(.*?)</h\1>', re.DOTALL | re.IGNORECASE)
+            paragraph_pattern = re.compile(r'<p[^>]*>(.*?)</p>', re.DOTALL | re.IGNORECASE)
+            ul_pattern = re.compile(r'<ul[^>]*>(.*?)</ul>', re.DOTALL | re.IGNORECASE)
+            ol_pattern = re.compile(r'<ol[^>]*>(.*?)</ol>', re.DOTALL | re.IGNORECASE)
+            li_pattern = re.compile(r'<li[^>]*>(.*?)</li>', re.DOTALL | re.IGNORECASE)
+            
+            # Find all content elements with their positions
+            elements = []
+            
+            # Extract headings
+            for match in heading_pattern.finditer(article_content):
+                level = int(match.group(1))
+                text = BeautifulSoup(match.group(2), 'html.parser').get_text().strip()
+                position = match.start()
+                elements.append(('heading', level, text, position))
+            
+            # Extract paragraphs
+            for match in paragraph_pattern.finditer(article_content):
+                text = BeautifulSoup(match.group(1), 'html.parser').get_text().strip()
+                position = match.start()
+                elements.append(('paragraph', 0, text, position))
+            
+            # Extract lists and list items
+            for ul_match in ul_pattern.finditer(article_content):
+                ul_pos = ul_match.start()
+                ul_content = ul_match.group(1)
                 
-                # Directly add the H1 if it exists
-                h1_tag = soup.find('h1')
-                if h1_tag:
-                    doc.add_heading(h1_tag.get_text().strip(), level=1)
+                # Find all list items in this unordered list
+                for li_match in li_pattern.finditer(ul_content):
+                    text = BeautifulSoup(li_match.group(1), 'html.parser').get_text().strip()
+                    # Use ul_pos + li_match.start() to get absolute position
+                    position = ul_pos + li_match.start()
+                    elements.append(('ul_item', 0, text, position))
+            
+            # Extract ordered lists
+            for ol_match in ol_pattern.finditer(article_content):
+                ol_pos = ol_match.start()
+                ol_content = ol_match.group(1)
                 
-                # Simple sequential processing of all elements
-                # This preserves the document structure without reorganizing
-                for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol']):
-                    if element.name.startswith('h') and len(element.name) == 2:
-                        # Skip H1 as we've already processed it
-                        if element.name == 'h1' and element == h1_tag:
-                            continue
-                        
-                        try:
-                            level = int(element.name[1])
-                            heading_text = element.get_text().strip()
-                            if heading_text:
-                                doc.add_heading(heading_text, level=level)
-                        except (ValueError, IndexError):
-                            # Fallback for parsing issues
-                            doc.add_paragraph(element.get_text().strip()).bold = True
-                    
-                    elif element.name == 'p':
-                        p_text = element.get_text().strip()
-                        if p_text:
-                            doc.add_paragraph(p_text)
-                    
-                    elif element.name == 'ul':
-                        for li in element.find_all('li', recursive=False):
-                            li_text = li.get_text().strip()
-                            if li_text:
-                                doc.add_paragraph(li_text, style='List Bullet')
-                    
-                    elif element.name == 'ol':
-                        for li in element.find_all('li', recursive=False):
-                            li_text = li.get_text().strip()
-                            if li_text:
-                                doc.add_paragraph(li_text, style='List Number')
-            else:
-                # Plain text formatting
-                lines = article_content.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                        
-                    # Check for markdown-style headings
-                    if line.startswith('# '):
-                        doc.add_heading(line[2:], level=1)
-                    elif line.startswith('## '):
-                        doc.add_heading(line[3:], level=2)
-                    elif line.startswith('### '):
-                        doc.add_heading(line[4:], level=3)
-                    elif line.startswith('#### '):
-                        doc.add_heading(line[5:], level=4)
-                    elif line.startswith('- ') or line.startswith('* '):
-                        doc.add_paragraph(line[2:], style='List Bullet')
-                    elif re.match(r'^\d+\.\s', line):
-                        doc.add_paragraph(line[line.find(' ')+1:], style='List Number')
-                    else:
-                        doc.add_paragraph(line)
+                # Find all list items in this ordered list
+                for li_match in li_pattern.finditer(ol_content):
+                    text = BeautifulSoup(li_match.group(1), 'html.parser').get_text().strip()
+                    position = ol_pos + li_match.start()
+                    elements.append(('ol_item', 0, text, position))
+            
+            # Sort elements by their position in the document
+            elements.sort(key=lambda x: x[3])
+            
+            # Process elements in order
+            logger.info(f"Found {len(elements)} elements to process")
+            for element_type, level, text, _ in elements:
+                if element_type == 'heading':
+                    if text:
+                        logger.info(f"Adding heading level {level}: {text[:30]}...")
+                        doc.add_heading(text, level=level)
+                elif element_type == 'paragraph':
+                    if text:
+                        doc.add_paragraph(text)
+                elif element_type == 'ul_item':
+                    if text:
+                        doc.add_paragraph(text, style='List Bullet')
+                elif element_type == 'ol_item':
+                    if text:
+                        doc.add_paragraph(text, style='List Number')
+            
+            # If no elements were processed, fall back to adding the raw content
+            if not elements:
+                logger.warning("No HTML elements found, falling back to raw content")
+                
+                # Split by double newlines and process
+                for para in article_content.split('\n\n'):
+                    para = para.strip()
+                    if para:
+                        # Check if it looks like a heading
+                        if para.startswith('# '):
+                            doc.add_heading(para[2:], level=1)
+                        elif para.startswith('## '):
+                            doc.add_heading(para[3:], level=2)
+                        elif para.startswith('### '):
+                            doc.add_heading(para[4:], level=3)
+                        elif para.startswith('#### '):
+                            doc.add_heading(para[5:], level=4)
+                        else:
+                            doc.add_paragraph(para)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
@@ -3269,75 +3291,104 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add content heading
         doc.add_heading("Optimized Content", 1)
         
-        # FIX: Direct approach using BeautifulSoup to process HTML in proper order
+        # COMPLETELY REVISED: Use regex to extract and process HTML elements
         if html_content and isinstance(html_content, str):
-            # Check if content contains HTML
-            if '<' in html_content and '>' in html_content:
-                # Parse the HTML
-                soup = BeautifulSoup(html_content, 'html.parser')
+            # Log content for debugging
+            logger.info(f"HTML content length: {len(html_content)} characters")
+            
+            # Use regular expressions to extract elements in order of appearance
+            heading_pattern = re.compile(r'<h([1-6])[^>]*>(.*?)</h\1>', re.DOTALL | re.IGNORECASE)
+            paragraph_pattern = re.compile(r'<p[^>]*>(.*?)</p>', re.DOTALL | re.IGNORECASE)
+            ul_pattern = re.compile(r'<ul[^>]*>(.*?)</ul>', re.DOTALL | re.IGNORECASE)
+            ol_pattern = re.compile(r'<ol[^>]*>(.*?)</ol>', re.DOTALL | re.IGNORECASE)
+            li_pattern = re.compile(r'<li[^>]*>(.*?)</li>', re.DOTALL | re.IGNORECASE)
+            
+            # Find all content elements with their positions
+            elements = []
+            
+            # Extract headings
+            for match in heading_pattern.finditer(html_content):
+                level = int(match.group(1))
+                text = BeautifulSoup(match.group(2), 'html.parser').get_text().strip()
+                position = match.start()
+                elements.append(('heading', level, text, position))
+            
+            # Extract paragraphs
+            for match in paragraph_pattern.finditer(html_content):
+                text = BeautifulSoup(match.group(1), 'html.parser').get_text().strip()
+                position = match.start()
+                elements.append(('paragraph', 0, text, position))
+            
+            # Extract unordered lists
+            for ul_match in ul_pattern.finditer(html_content):
+                ul_pos = ul_match.start()
+                ul_content = ul_match.group(1)
                 
-                # Directly add the H1 if it exists
-                h1_tag = soup.find('h1')
-                if h1_tag:
-                    h1_heading = doc.add_heading(h1_tag.get_text().strip(), level=1)
-                    h1_heading.runs[0].font.size = Pt(16)
-                    h1_heading.runs[0].bold = True
+                # Find all list items in this unordered list
+                for li_match in li_pattern.finditer(ul_content):
+                    text = BeautifulSoup(li_match.group(1), 'html.parser').get_text().strip()
+                    position = ul_pos + li_match.start()
+                    elements.append(('ul_item', 0, text, position))
+            
+            # Extract ordered lists
+            for ol_match in ol_pattern.finditer(html_content):
+                ol_pos = ol_match.start()
+                ol_content = ol_match.group(1)
                 
-                # Simple sequential processing of all elements
-                # This preserves the document structure without reorganizing
-                for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol']):
-                    if element.name.startswith('h') and len(element.name) == 2:
-                        # Skip H1 as we've already processed it
-                        if element.name == 'h1' and element == h1_tag:
-                            continue
+                # Find all list items in this ordered list
+                for li_match in li_pattern.finditer(ol_content):
+                    text = BeautifulSoup(li_match.group(1), 'html.parser').get_text().strip()
+                    position = ol_pos + li_match.start()
+                    elements.append(('ol_item', 0, text, position))
+            
+            # Sort elements by their position in the document
+            elements.sort(key=lambda x: x[3])
+            
+            # Process elements in order
+            logger.info(f"Found {len(elements)} elements to process")
+            for element_type, level, text, _ in elements:
+                if element_type == 'heading':
+                    if text:
+                        logger.info(f"Adding heading level {level}: {text[:30]}...")
+                        heading = doc.add_heading(text, level=level)
                         
-                        try:
-                            level = int(element.name[1])
-                            heading_text = element.get_text().strip()
-                            if heading_text:
-                                heading = doc.add_heading(heading_text, level=level)
-                                
-                                # Style the heading based on level
-                                if level == 2:
-                                    heading.runs[0].font.size = Pt(14)
-                                    heading.runs[0].bold = True
-                                elif level == 3:
-                                    heading.runs[0].font.size = Pt(12)
-                                    heading.runs[0].bold = True
-                                    heading.runs[0].italic = True
-                                elif level >= 4:
-                                    heading.runs[0].font.size = Pt(11)
-                                    heading.runs[0].bold = True
-                                    heading.runs[0].italic = True
-                        except (ValueError, IndexError):
-                            # Fallback for parsing issues
-                            doc.add_paragraph(element.get_text().strip()).bold = True
-                    
-                    elif element.name == 'p':
-                        p_text = element.get_text().strip()
-                        if p_text:
-                            doc.add_paragraph(p_text)
-                    
-                    elif element.name == 'ul':
-                        for li in element.find_all('li', recursive=False):
-                            li_text = li.get_text().strip()
-                            if li_text:
-                                doc.add_paragraph(li_text, style='List Bullet')
-                    
-                    elif element.name == 'ol':
-                        for li in element.find_all('li', recursive=False):
-                            li_text = li.get_text().strip()
-                            if li_text:
-                                doc.add_paragraph(li_text, style='List Number')
-            else:
-                # Plain text formatting
+                        # Style the heading based on level
+                        if level == 1:
+                            heading.runs[0].font.size = Pt(16)
+                            heading.runs[0].bold = True
+                        elif level == 2:
+                            heading.runs[0].font.size = Pt(14)
+                            heading.runs[0].bold = True
+                        elif level == 3:
+                            heading.runs[0].font.size = Pt(12)
+                            heading.runs[0].bold = True
+                            heading.runs[0].italic = True
+                        elif level >= 4:
+                            heading.runs[0].font.size = Pt(11)
+                            heading.runs[0].bold = True
+                            heading.runs[0].italic = True
+                
+                elif element_type == 'paragraph':
+                    if text:
+                        doc.add_paragraph(text)
+                
+                elif element_type == 'ul_item':
+                    if text:
+                        doc.add_paragraph(text, style='List Bullet')
+                
+                elif element_type == 'ol_item':
+                    if text:
+                        doc.add_paragraph(text, style='List Number')
+            
+            # Fallback for plain text
+            if not elements:
+                logger.warning("No HTML elements found, treating as plain text")
                 lines = html_content.split('\n')
                 for line in lines:
                     line = line.strip()
                     if not line:
                         continue
-                        
-                    # Check for markdown-style headings
+                    
                     if line.startswith('# '):
                         doc.add_heading(line[2:], level=1)
                     elif line.startswith('## '):
