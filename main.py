@@ -1709,7 +1709,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
     Returns: article_with_links, links_added, success_status
     """
     try:
-        # Using the OpenAI API key
+        # Explicitly set OpenAI API key
         openai.api_key = openai_api_key
         
         # Calculate max links based on word count
@@ -1718,7 +1718,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         # Log for debugging
         logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
         
-        # 1. Extract paragraphs from the article - IMPROVED
+        # 1. Extract paragraphs from the article
         soup = BeautifulSoup(article_content, 'html.parser')
         paragraphs = []
         
@@ -1777,7 +1777,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         try:
             # Get paragraph embeddings
             response = openai.Embedding.create(
-                model="text-embedding-3-large",
+                model="text-embedding-3-small",
                 input=paragraph_texts
             )
             paragraph_embeddings = [item['embedding'] for item in response['data']]
@@ -1835,7 +1835,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 
                 # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
                 try:
-                    # FIXED: Use the OPENAI key for Claude API calls too
+                    # We'll use the OpenAI API key for Claude too since that's what's available
                     client = anthropic.Anthropic(api_key=openai_api_key)
                     anchor_response = client.messages.create(
                         model="claude-3-7-sonnet-20250219",
@@ -1889,69 +1889,36 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             logger.warning("No suitable links found to add")
             return article_content, [], False
         
-        # Update based on how paragraphs were extracted
-        modified_content = article_content
+        # Create a deep copy of the soup to modify
+        modified_soup = BeautifulSoup(article_content, 'html.parser')
+        modified_paragraphs = modified_soup.find_all('p')
         
-        # If we're working with HTML content with p tags
-        if '<p>' in article_content:
-            # Create a deep copy of the soup to modify
-            modified_soup = BeautifulSoup(article_content, 'html.parser')
-            modified_paragraphs = modified_soup.find_all('p')
-            
-            # Apply links
-            for link in links_to_add:
-                para_idx = link['paragraph_index']
-                if para_idx < len(modified_paragraphs):
-                    p_tag = modified_paragraphs[para_idx]
-                    p_html = str(p_tag)
-                    anchor_text = link['anchor_text']
-                    url = link['url']
-                    
-                    # Replace the text with a linked version
-                    new_html = p_tag.decode_contents().replace(
-                        anchor_text, 
-                        f'<a href="{url}">{anchor_text}</a>', 
-                        1
-                    )
-                    p_tag.clear()
-                    p_tag.append(BeautifulSoup(new_html, 'html.parser'))
-                    
-                    # Add context to the link info
-                    para_text = paragraphs[para_idx]['text']
-                    start_pos = max(0, para_text.find(anchor_text) - 30)
-                    end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
-                    context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
-                    
-                    # Update the link details
-                    link['context'] = context
-            
-            modified_content = str(modified_soup)
-        else:
-            # For non-HTML or plain text content
-            for link in links_to_add:
-                para_idx = link['paragraph_index']
+        # Apply links
+        for link in links_to_add:
+            para_idx = link['paragraph_index']
+            if para_idx < len(modified_paragraphs):
+                p_tag = modified_paragraphs[para_idx]
+                p_html = str(p_tag)
                 anchor_text = link['anchor_text']
                 url = link['url']
                 
-                # For plain text, we need to find the exact occurrence
-                # Create a temporary HTML structure around the plain text for easy replacement
-                para_text = paragraphs[para_idx]['text']
+                # Replace the text with a linked version
+                new_html = p_tag.decode_contents().replace(
+                    anchor_text, 
+                    f'<a href="{url}">{anchor_text}</a>', 
+                    1
+                )
+                p_tag.clear()
+                p_tag.append(BeautifulSoup(new_html, 'html.parser'))
                 
-                if isinstance(paragraphs[para_idx]['element'], str) and paragraphs[para_idx]['element'].startswith('chunk_'):
-                    # For text chunks, we need to find and replace in the full content
-                    modified_content = modified_content.replace(
-                        para_text,
-                        para_text.replace(anchor_text, f'<a href="{url}">{anchor_text}</a>', 1),
-                        1
-                    )
-                    
-                    # Add context to the link info
-                    start_pos = max(0, para_text.find(anchor_text) - 30)
-                    end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
-                    context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
-                    
-                    # Update the link details
-                    link['context'] = context
+                # Add context to the link info
+                para_text = paragraphs[para_idx]['text']
+                start_pos = max(0, para_text.find(anchor_text) - 30)
+                end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
+                context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
+                
+                # Update the link details
+                link['context'] = context
         
         # Format for return
         links_output = []
@@ -1964,7 +1931,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 "similarity_score": round(link['similarity_score'], 2)
             })
         
-        return modified_content, links_output, True
+        return str(modified_soup), links_output, True
         
     except Exception as e:
         error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
@@ -3821,9 +3788,9 @@ def main():
                                 
                                 status_text.text(f"Analyzing article content and generating internal links...")
                                 
-                                # Generate internal links using OpenAI for embeddings and Claude for anchor text
+                                # FIXED: Pass the OpenAI API key instead of the Anthropic API key
                                 article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
-                                    article_content, pages_with_embeddings, anthropic_api_key, word_count
+                                    article_content, pages_with_embeddings, openai_api_key, word_count
                                 )
                                 
                                 if links_success:
