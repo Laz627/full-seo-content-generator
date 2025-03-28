@@ -3300,227 +3300,116 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add content heading
         doc.add_heading("Optimized Content", 1)
         
-        # Process article content - COMPLETELY REWRITTEN with line-by-line approach
+        # COMPLETELY REVISED: Use BeautifulSoup for proper HTML parsing
         if html_content and isinstance(html_content, str):
-            # Log for debugging
-            logger.info(f"Processing HTML content (length: {len(html_content)})")
+            # Parse HTML with BeautifulSoup
+            soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Replace any HTML entities with their text equivalents
-            content = html_content.replace('&nbsp;', ' ').replace('&amp;', '&')
-            
-            # First, try to handle markdown-style sections
-            if '# ' in content or '## ' in content:
-                # This might be markdown format
-                lines = content.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if not line:
+            # Find all elements we want to process
+            for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'strong', 'em']):
+                # Skip empty elements
+                if not element.get_text().strip():
+                    continue
+                
+                # Process headings - ensure no nested tags are included
+                if element.name.startswith('h') and len(element.name) == 2:
+                    try:
+                        level = int(element.name[1])
+                        text = element.get_text().strip()
+                        if text:
+                            heading = doc.add_heading(text, level=level)
+                            # Style the heading based on level
+                            if level == 1:
+                                heading.runs[0].font.size = Pt(16)
+                            elif level == 2:
+                                heading.runs[0].font.size = Pt(14)
+                            elif level == 3:
+                                heading.runs[0].font.size = Pt(12)
+                                heading.runs[0].italic = True
+                            elif level >= 4:
+                                heading.runs[0].font.size = Pt(11)
+                                heading.runs[0].italic = True
+                    except:
+                        # Fallback for parsing issues
+                        doc.add_paragraph(element.get_text().strip()).bold = True
+                
+                # Process paragraphs
+                elif element.name == 'p':
+                    # Skip if this is a list item's parent
+                    if element.find(['ul', 'ol']):
                         continue
                     
-                    if line.startswith('# '):
-                        heading = doc.add_heading(line[2:], level=1)
-                        heading.runs[0].font.size = Pt(16)
-                    elif line.startswith('## '):
-                        heading = doc.add_heading(line[3:], level=2)
-                        heading.runs[0].font.size = Pt(14)
-                    elif line.startswith('### '):
-                        heading = doc.add_heading(line[4:], level=3)
-                        heading.runs[0].font.size = Pt(12)
-                        heading.runs[0].italic = True
-                    elif line.startswith('#### '):
-                        heading = doc.add_heading(line[5:], level=4)
-                        heading.runs[0].font.size = Pt(11)
-                        heading.runs[0].italic = True
-                    elif line.startswith('- ') or line.startswith('* '):
-                        doc.add_paragraph(line[2:], style='List Bullet')
-                    elif re.match(r'^\d+\.\s', line):
-                        doc.add_paragraph(line[line.find(' ')+1:], style='List Number')
-                    else:
+                    # Add the paragraph
+                    text = element.get_text().strip()
+                    if text:
+                        p = doc.add_paragraph()
+                        
+                        # Check for strong/em within paragraph
+                        if element.find(['strong', 'em', 'b', 'i']):
+                            # Need to process formatting
+                            current_text = ""
+                            for content in element.contents:
+                                if isinstance(content, str):
+                                    # Plain text
+                                    if current_text:
+                                        p.add_run(current_text)
+                                        current_text = ""
+                                    p.add_run(content)
+                                elif content.name in ['strong', 'b']:
+                                    # Bold text
+                                    if current_text:
+                                        p.add_run(current_text)
+                                        current_text = ""
+                                    bold_run = p.add_run(content.get_text())
+                                    bold_run.bold = True
+                                elif content.name in ['em', 'i']:
+                                    # Italic text
+                                    if current_text:
+                                        p.add_run(current_text)
+                                        current_text = ""
+                                    italic_run = p.add_run(content.get_text())
+                                    italic_run.italic = True
+                                else:
+                                    # Other element, get its text
+                                    current_text += content.get_text()
+                            
+                            # Add any remaining text
+                            if current_text:
+                                p.add_run(current_text)
+                        else:
+                            # Simple paragraph
+                            p.add_run(text)
+                
+                # Process unordered lists - only process top-level ul
+                elif element.name == 'ul' and not element.find_parent(['li', 'ul', 'ol']):
+                    for li in element.find_all('li', recursive=False):
+                        li_text = li.get_text().strip()
+                        if li_text:
+                            doc.add_paragraph(li_text, style='List Bullet')
+                
+                # Process ordered lists - only process top-level ol
+                elif element.name == 'ol' and not element.find_parent(['li', 'ul', 'ol']):
+                    for li in element.find_all('li', recursive=False):
+                        li_text = li.get_text().strip()
+                        if li_text:
+                            doc.add_paragraph(li_text, style='List Number')
+                
+                # Avoid processing list items directly - they'll be handled by their parent ul/ol
+                # This prevents duplicate list items
+            
+            # If no contents were added, try a simpler approach
+            if len(doc.paragraphs) <= 1 or doc.paragraphs[-1].text == 'Optimized Content':
+                logger.warning("HTML parsing found no content, trying text extraction")
+                
+                # Extract all text, removing HTML tags
+                text_content = re.sub(r'<.*?>', '\n', html_content)
+                text_content = re.sub(r'\n+', '\n', text_content).strip()
+                
+                # Split by newlines and process
+                for line in text_content.split('\n'):
+                    line = line.strip()
+                    if line:
                         doc.add_paragraph(line)
-            else:
-                # Try HTML parsing with direct regex
-                # First, clean the HTML by removing newlines within tags
-                content = re.sub(r'<([^>]*)\n([^>]*)>', r'<\1 \2>', content)
-                
-                # Track if we're inside a specific element
-                in_heading = False
-                heading_level = 0
-                heading_content = ""
-                
-                in_paragraph = False
-                paragraph_content = ""
-                
-                # Process the content line by line, looking for heading tags
-                lines = content.split('\n')
-                for line in lines:
-                    # Process heading tags
-                    for level in range(1, 7):
-                        if re.search(f'<h{level}[^>]*>', line, re.IGNORECASE) and '</h' in line:
-                            # Complete heading on one line
-                            match = re.search(f'<h{level}[^>]*>(.*?)</h{level}>', line, re.IGNORECASE)
-                            if match:
-                                heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
-                                if heading_text:
-                                    heading = doc.add_heading(heading_text, level=level)
-                                    # Style the heading based on level
-                                    if level == 1:
-                                        heading.runs[0].font.size = Pt(16)
-                                    elif level == 2:
-                                        heading.runs[0].font.size = Pt(14)
-                                    elif level == 3:
-                                        heading.runs[0].font.size = Pt(12)
-                                        heading.runs[0].italic = True
-                                    elif level >= 4:
-                                        heading.runs[0].font.size = Pt(11)
-                                        heading.runs[0].italic = True
-                                    
-                                    logger.info(f"Added complete heading: H{level} - {heading_text[:30]}...")
-                        
-                        elif re.search(f'<h{level}[^>]*>', line, re.IGNORECASE):
-                            # Start of heading tag
-                            in_heading = True
-                            heading_level = level
-                            heading_content = re.sub(f'<h{level}[^>]*>', '', line, flags=re.IGNORECASE).strip()
-                        
-                        elif in_heading and re.search(f'</h{heading_level}>', line, re.IGNORECASE):
-                            # End of heading tag
-                            heading_content += " " + re.sub(f'</h{heading_level}>', '', line, flags=re.IGNORECASE).strip()
-                            heading_text = re.sub(r'<.*?>', '', heading_content).strip()
-                            if heading_text:
-                                heading = doc.add_heading(heading_text, level=heading_level)
-                                # Style the heading based on level
-                                if heading_level == 1:
-                                    heading.runs[0].font.size = Pt(16)
-                                elif heading_level == 2:
-                                    heading.runs[0].font.size = Pt(14)
-                                elif heading_level == 3:
-                                    heading.runs[0].font.size = Pt(12)
-                                    heading.runs[0].italic = True
-                                elif heading_level >= 4:
-                                    heading.runs[0].font.size = Pt(11)
-                                    heading.runs[0].italic = True
-                                
-                                logger.info(f"Added heading: H{heading_level} - {heading_text[:30]}...")
-                            in_heading = False
-                            heading_content = ""
-                    
-                    # Continue accumulating content if inside a heading
-                    if in_heading and not re.search(f'</h{heading_level}>', line, re.IGNORECASE) and not re.search(f'<h{heading_level}[^>]*>', line, re.IGNORECASE):
-                        heading_content += " " + line.strip()
-                    
-                    # Process paragraph tags
-                    if '<p>' in line.lower() and '</p>' in line.lower():
-                        # Complete paragraph on one line
-                        matches = re.findall(r'<p[^>]*>(.*?)</p>', line, re.IGNORECASE)
-                        for match in matches:
-                            paragraph_text = re.sub(r'<.*?>', '', match).strip()
-                            if paragraph_text:
-                                doc.add_paragraph(paragraph_text)
-                    
-                    elif '<p>' in line.lower():
-                        # Start of paragraph
-                        in_paragraph = True
-                        paragraph_content = re.sub(r'<p[^>]*>', '', line, flags=re.IGNORECASE).strip()
-                    
-                    elif in_paragraph and '</p>' in line.lower():
-                        # End of paragraph
-                        paragraph_content += " " + re.sub(r'</p>', '', line, flags=re.IGNORECASE).strip()
-                        paragraph_text = re.sub(r'<.*?>', '', paragraph_content).strip()
-                        if paragraph_text:
-                            doc.add_paragraph(paragraph_text)
-                        in_paragraph = False
-                        paragraph_content = ""
-                    
-                    # Continue accumulating content if inside a paragraph
-                    elif in_paragraph:
-                        paragraph_content += " " + line.strip()
-                
-                # Process any remaining content at the end of the file
-                if in_heading:
-                    heading_text = re.sub(r'<.*?>', '', heading_content).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=heading_level)
-                        # Style the heading based on level
-                        if heading_level == 1:
-                            heading.runs[0].font.size = Pt(16)
-                        elif heading_level == 2:
-                            heading.runs[0].font.size = Pt(14)
-                        elif heading_level == 3:
-                            heading.runs[0].font.size = Pt(12)
-                            heading.runs[0].italic = True
-                        elif heading_level >= 4:
-                            heading.runs[0].font.size = Pt(11)
-                            heading.runs[0].italic = True
-                        
-                        logger.info(f"Added final heading: H{heading_level} - {heading_text[:30]}...")
-                
-                if in_paragraph:
-                    paragraph_text = re.sub(r'<.*?>', '', paragraph_content).strip()
-                    if paragraph_text:
-                        doc.add_paragraph(paragraph_text)
-                
-                # If we failed to extract anything with the line-by-line approach, use a different strategy
-                if doc.paragraphs[-1].text == "Optimized Content":
-                    logger.warning("Line-by-line parsing found no content, trying a different approach")
-                    
-                    # Try to extract all heading tags with regex
-                    heading_elements = []
-                    
-                    for level in range(1, 7):
-                        pattern = re.compile(f'<h{level}[^>]*>(.*?)</h{level}>', re.DOTALL | re.IGNORECASE)
-                        for match in pattern.finditer(content):
-                            heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
-                            if heading_text:
-                                heading_elements.append({
-                                    'level': level,
-                                    'text': heading_text,
-                                    'position': match.start()
-                                })
-                    
-                    # Sort by position to maintain document order
-                    heading_elements.sort(key=lambda x: x['position'])
-                    
-                    # Add headings to document
-                    for heading_data in heading_elements:
-                        level = heading_data['level']
-                        text = heading_data['text']
-                        
-                        heading = doc.add_heading(text, level=level)
-                        
-                        # Style the heading based on level
-                        if level == 1:
-                            heading.runs[0].font.size = Pt(16)
-                        elif level == 2:
-                            heading.runs[0].font.size = Pt(14)
-                        elif level == 3:
-                            heading.runs[0].font.size = Pt(12)
-                            heading.runs[0].italic = True
-                        elif level >= 4:
-                            heading.runs[0].font.size = Pt(11)
-                            heading.runs[0].italic = True
-                        
-                        logger.info(f"Added heading via regex: H{level} - {text[:30]}...")
-                    
-                    # Extract paragraphs with a single regex
-                    paragraph_pattern = re.compile(r'<p[^>]*>(.*?)</p>', re.DOTALL | re.IGNORECASE)
-                    for match in paragraph_pattern.finditer(content):
-                        paragraph_text = re.sub(r'<.*?>', '', match.group(1)).strip()
-                        if paragraph_text:
-                            doc.add_paragraph(paragraph_text)
-                    
-                    # If still nothing found, try just adding the raw text
-                    if doc.paragraphs[-1].text == "Optimized Content":
-                        logger.warning("All HTML parsing approaches failed, adding raw text")
-                        
-                        # Remove all HTML tags and add remaining text
-                        raw_text = re.sub(r'<.*?>', ' ', content).strip()
-                        raw_text = re.sub(r'\s+', ' ', raw_text)
-                        
-                        # Split by potential paragraph breaks
-                        paragraphs = re.split(r'\.\s+', raw_text)
-                        for paragraph in paragraphs:
-                            if len(paragraph) > 20:  # Only add substantial paragraphs
-                                doc.add_paragraph(paragraph.strip() + '.')
         
         # Save document to memory stream
         doc_stream = BytesIO()
