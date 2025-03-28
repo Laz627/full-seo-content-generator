@@ -2142,7 +2142,7 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # IMPROVED: Line-by-line processing with style preservation
+        # IMPROVED: Line-by-line processing with better markdown heading detection
         if article_content and isinstance(article_content, str):
             # Split the content by lines
             lines = article_content.split('\n')
@@ -2221,7 +2221,24 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 if not line:
                     continue
                 
-                # Check if this line is a heading tag
+                # First check for markdown headings
+                markdown_heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+                if markdown_heading_match:
+                    # Count number of # symbols to determine heading level
+                    level = len(markdown_heading_match.group(1))
+                    heading_text = markdown_heading_match.group(2).strip()
+                    
+                    # Remove any HTML tags from the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    
+                    if heading_text:
+                        doc.add_heading(heading_text, level=level)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                    continue
+                
+                # Check if this line is an HTML heading tag
                 h1_match = re.match(r'^<h1[^>]*>(.*?)</h1>$', line, re.IGNORECASE)
                 h2_match = re.match(r'^<h2[^>]*>(.*?)</h2>$', line, re.IGNORECASE)
                 h3_match = re.match(r'^<h3[^>]*>(.*?)</h3>$', line, re.IGNORECASE)
@@ -2315,6 +2332,20 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                         if para_text.strip():
                             para = doc.add_paragraph()
                             add_styled_text(para, para_text)
+                
+                # Check for markdown bullet points
+                elif line.startswith('* ') or line.startswith('- '):
+                    bullet_text = line[2:].strip()
+                    if bullet_text:
+                        bullet_para = doc.add_paragraph(style='List Bullet')
+                        add_styled_text(bullet_para, bullet_text)
+                
+                # Check for markdown numbered list
+                elif re.match(r'^\d+\.\s', line):
+                    num_text = re.sub(r'^\d+\.\s', '', line).strip()
+                    if num_text:
+                        num_para = doc.add_paragraph(style='List Number')
+                        add_styled_text(num_para, num_text)
                 
                 # If it's plain text (not starting with a tag), add as paragraph
                 elif not line.startswith('<'):
