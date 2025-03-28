@@ -1709,7 +1709,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
     Returns: article_with_links, links_added, success_status
     """
     try:
-        # Using the OpenAI API key for embeddings
+        # Using the OpenAI API key
         openai.api_key = openai_api_key
         
         # Calculate max links based on word count
@@ -1718,7 +1718,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         # Log for debugging
         logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
         
-        # 1. Extract paragraphs from the article - IMPROVED
+        # 1. Extract paragraphs from the article
         soup = BeautifulSoup(article_content, 'html.parser')
         paragraphs = []
         
@@ -1770,14 +1770,32 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             else:
                 return article_content, [], False
         
-        # 2. Generate embeddings for each paragraph
+        # 2. Generate embeddings for each paragraph - use same model as pages
         logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs")
         paragraph_texts = [p['text'] for p in paragraphs]
         
         try:
-            # Get paragraph embeddings using OpenAI
+            # IMPORTANT: Check dimensions of the first page embedding to determine model
+            first_page = next((p for p in pages_with_embeddings if p.get('embedding')), None)
+            
+            if not first_page:
+                logger.error("No valid page embeddings found")
+                return article_content, [], False
+            
+            embed_dim = len(first_page['embedding'])
+            logger.info(f"Detected page embedding dimension: {embed_dim}")
+            
+            # Choose the appropriate model based on dimension
+            if embed_dim == 3072:
+                embedding_model = "text-embedding-3-large"  # 3072 dimensions
+            else:
+                embedding_model = "text-embedding-3-small"  # 1536 dimensions
+            
+            logger.info(f"Using embedding model: {embedding_model}")
+            
+            # Get paragraph embeddings using the same model as pages
             response = openai.Embedding.create(
-                model="text-embedding-3-small",
+                model=embedding_model,
                 input=paragraph_texts
             )
             paragraph_embeddings = [item['embedding'] for item in response['data']]
@@ -1818,7 +1836,12 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 page_embedding = page.get('embedding', [])
                 if not page_embedding:
                     continue
-                    
+                
+                # ADDED: Verify dimensions match
+                if len(para_embedding) != len(page_embedding):
+                    logger.error(f"Embedding dimension mismatch: paragraph {len(para_embedding)}, page {len(page_embedding)}")
+                    continue
+                
                 # Calculate cosine similarity
                 similarity = np.dot(para_embedding, page_embedding) / (
                     np.linalg.norm(para_embedding) * np.linalg.norm(page_embedding)
@@ -1833,40 +1856,48 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 page_title = best_page.get('title', '')
                 para_text = paragraph['text']
                 
-                # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
+                # Using simple keyword matching instead of Claude for anchor text selection
+                # This avoids API key issues entirely
                 try:
-                    # Use the Anthropic API key for Claude
-                    client = anthropic.Anthropic(api_key=anthropic_api_key)
-                    anchor_response = client.messages.create(
-                        model="claude-3-7-sonnet-20250219",
-                        max_tokens=50,
-                        system="You are an expert at identifying semantically relevant anchor text for links.",
-                        messages=[
-                            {"role": "user", "content": f"""
-                            Find the BEST 2-6 word phrase in this paragraph that would make a semantically relevant anchor text for a page titled "{page_title}".
-                            
-                            The anchor text MUST:
-                            1. Be an EXACT substring in the paragraph (case-sensitive)
-                            2. Contain at least one meaningful keyword from the page title
-                            3. Make sense as clickable text
-                            
-                            Paragraph:
-                            {para_text}
-                            
-                            Page title:
-                            {page_title}
-                            
-                            Return ONLY the exact anchor text phrase, nothing else.
-                            """}
-                        ],
-                        temperature=0.3
-                    )
+                    # Extract keywords from page title
+                    title_words = set(re.findall(r'\b\w{4,}\b', page_title.lower()))
                     
-                    anchor_text = anchor_response.content[0].text.strip()
-                    anchor_text = anchor_text.strip('"\'')  # Remove quotes if present
+                    # Find best anchor text by matching title keywords in paragraph
+                    anchor_text = ""
+                    best_word_count = 0
+                    
+                    # Look for 2-6 word phrases that contain title keywords
+                    words = para_text.split()
+                    for i in range(len(words)):
+                        for j in range(i+1, min(i+7, len(words)+1)):
+                            phrase = " ".join(words[i:j])
+                            if 2 <= len(phrase.split()) <= 6:
+                                phrase_words = set(re.findall(r'\b\w{4,}\b', phrase.lower()))
+                                matching_words = phrase_words.intersection(title_words)
+                                
+                                if matching_words and len(matching_words) > best_word_count:
+                                    anchor_text = phrase
+                                    best_word_count = len(matching_words)
+                    
+                    # If no good match found but we need an anchor text
+                    if not anchor_text and title_words:
+                        # Find any substantial words from title in paragraph
+                        for title_word in sorted(title_words, key=len, reverse=True):
+                            if len(title_word) >= 5:  # Only use substantial words
+                                pattern = re.compile(r'\b' + title_word + r'\b', re.IGNORECASE)
+                                match = pattern.search(para_text)
+                                if match:
+                                    # Get 1-2 words before and after the match
+                                    start = max(0, match.start() - 20)
+                                    end = min(len(para_text), match.end() + 20)
+                                    context = para_text[start:end]
+                                    words = context.split()
+                                    if len(words) >= 3:
+                                        anchor_text = " ".join(words[:3])
+                                        break
                     
                     # Verify the anchor text exists in the paragraph
-                    if anchor_text in para_text:
+                    if anchor_text and anchor_text in para_text:
                         # Add to our links list
                         links_to_add.append({
                             'url': best_page['url'],
@@ -1898,7 +1929,6 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             para_idx = link['paragraph_index']
             if para_idx < len(modified_paragraphs):
                 p_tag = modified_paragraphs[para_idx]
-                p_html = str(p_tag)
                 anchor_text = link['anchor_text']
                 url = link['url']
                 
