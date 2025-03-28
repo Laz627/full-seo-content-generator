@@ -2142,49 +2142,131 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # SIMPLIFIED: Convert HTML to text and parse by line
+        # COMPLETELY REVISED: More thorough HTML parsing and handling
         if article_content and isinstance(article_content, str):
-            # Step 1: Extract headings with regex
-            heading_matches = []
-            for level in range(1, 7):
-                for match in re.finditer(f'<h{level}[^>]*>(.*?)</h{level}>', article_content, re.DOTALL | re.IGNORECASE):
-                    # Clean the heading text
-                    heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
-                    if heading_text:
-                        heading_matches.append({
-                            'level': level,
-                            'text': heading_text,
-                            'position': match.start()
+            try:
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(article_content, 'html.parser')
+                
+                # Process the document elements sequentially
+                elements = []
+                
+                # First, find all headings with their positions
+                for i in range(1, 7):
+                    for heading in soup.find_all(f'h{i}'):
+                        text = heading.get_text().strip()
+                        if text:
+                            elements.append({
+                                'type': 'heading',
+                                'level': i,
+                                'text': text,
+                                'position': article_content.find(str(heading))
+                            })
+                
+                # Find all paragraphs with their positions
+                for p in soup.find_all('p'):
+                    text = p.get_text().strip()
+                    if text:
+                        elements.append({
+                            'type': 'paragraph',
+                            'text': text,
+                            'position': article_content.find(str(p))
                         })
+                
+                # Find all unordered lists with their positions
+                for ul in soup.find_all('ul'):
+                    # Skip nested lists
+                    if ul.find_parent(['ul', 'ol']) is None:
+                        items = []
+                        for li in ul.find_all('li', recursive=False):
+                            items.append(li.get_text().strip())
+                        
+                        if items:
+                            elements.append({
+                                'type': 'unordered_list',
+                                'items': items,
+                                'position': article_content.find(str(ul))
+                            })
+                
+                # Find all ordered lists with their positions
+                for ol in soup.find_all('ol'):
+                    # Skip nested lists
+                    if ol.find_parent(['ul', 'ol']) is None:
+                        items = []
+                        for li in ol.find_all('li', recursive=False):
+                            items.append(li.get_text().strip())
+                        
+                        if items:
+                            elements.append({
+                                'type': 'ordered_list',
+                                'items': items,
+                                'position': article_content.find(str(ol))
+                            })
+                
+                # Sort elements by their position in the document
+                elements = sorted([e for e in elements if e['position'] >= 0], key=lambda x: x['position'])
+                
+                # Now add them to the document in order
+                for element in elements:
+                    if element['type'] == 'heading':
+                        doc.add_heading(element['text'], level=element['level'])
+                    elif element['type'] == 'paragraph':
+                        doc.add_paragraph(element['text'])
+                    elif element['type'] == 'unordered_list':
+                        for item in element['items']:
+                            doc.add_paragraph(item, style='List Bullet')
+                    elif element['type'] == 'ordered_list':
+                        for item in element['items']:
+                            doc.add_paragraph(item, style='List Number')
+                
+                # If we didn't find any content, extract text more aggressively
+                if len(elements) == 0:
+                    logger.warning("No structured content found, extracting text more aggressively")
+                    
+                    # Clean up HTML to improve text extraction
+                    cleaned_html = re.sub(r'<br\s*/?>', '\n', article_content)
+                    cleaned_html = re.sub(r'<p[^>]*>', '\n\n', cleaned_html)
+                    cleaned_html = re.sub(r'</p>', '\n', cleaned_html)
+                    cleaned_html = re.sub(r'<li[^>]*>', '\n• ', cleaned_html)
+                    cleaned_html = re.sub(r'</li>', '\n', cleaned_html)
+                    
+                    # Extract text, removing remaining HTML tags
+                    text_content = re.sub(r'<[^>]+>', '', cleaned_html)
+                    text_content = re.sub(r'\n{3,}', '\n\n', text_content)  # Normalize newlines
+                    
+                    # Add extracted text as paragraphs
+                    for paragraph in text_content.split('\n\n'):
+                        paragraph = paragraph.strip()
+                        if paragraph:
+                            lines = paragraph.split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    if line.startswith('• '):
+                                        doc.add_paragraph(line[2:], style='List Bullet')
+                                    else:
+                                        doc.add_paragraph(line)
             
-            # Add all headings first, sorted by position
-            if heading_matches:
-                heading_matches.sort(key=lambda x: x['position'])
-                for heading in heading_matches:
-                    doc.add_heading(heading['text'], level=heading['level'])
-            
-            # Step 2: Extract paragraphs and list items
-            # Remove HTML tags but preserve structure with newlines
-            text_content = re.sub(r'<br\s*/?>|</?p>|</?div>', '\n', article_content)
-            text_content = re.sub(r'<li>', '\n• ', text_content)  # Convert list items to bullet points
-            text_content = re.sub(r'</?[^>]+>', ' ', text_content)  # Remove all other HTML tags
-            text_content = re.sub(r'\s+', ' ', text_content)  # Normalize whitespace
-            text_content = re.sub(r'\n\s+', '\n', text_content)  # Clean up newlines
-            
-            # Split by newlines and add as paragraphs
-            paragraphs = [p.strip() for p in text_content.split('\n') if p.strip()]
-            
-            # Filter out paragraphs that are already in the headings
-            heading_texts = set(h['text'] for h in heading_matches)
-            paragraphs = [p for p in paragraphs if p not in heading_texts]
-            
-            # Add the paragraphs to the document
-            for para in paragraphs:
-                if para.startswith('• '):
-                    # This is a list item
-                    doc.add_paragraph(para[2:], style='List Bullet')
-                else:
-                    doc.add_paragraph(para)
+            except Exception as e:
+                logger.error(f"Error parsing HTML content: {e}")
+                logger.error(traceback.format_exc())
+                
+                # Fallback: try to extract pure text
+                try:
+                    # Remove all HTML tags and add text by paragraphs
+                    text_content = re.sub(r'<[^>]+>', ' ', article_content)
+                    text_content = re.sub(r'\s+', ' ', text_content).strip()
+                    
+                    # Break into paragraphs
+                    paragraphs = re.split(r'\.\s+', text_content)
+                    for para in paragraphs:
+                        para = para.strip()
+                        if para and len(para) > 20:  # Only add substantial paragraphs
+                            doc.add_paragraph(para + '.')
+                
+                except Exception as sub_e:
+                    logger.error(f"Fallback text extraction also failed: {sub_e}")
+                    doc.add_paragraph("Error extracting content from the article.")
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
@@ -3242,62 +3324,156 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
             doc.add_paragraph()
         
         # Add content heading
-        doc.add_heading("Optimized Content", 1)
+        content_heading = doc.add_heading("Optimized Content", 1)
         
-        # SIMPLIFIED: Extract and process headings first, then paragraphs
+        # COMPLETELY REVISED: Detailed HTML parsing and systematic document building
         if html_content and isinstance(html_content, str):
-            # Step 1: Extract headings with regex
-            heading_matches = []
-            for level in range(1, 7):
-                for match in re.finditer(f'<h{level}[^>]*>(.*?)</h{level}>', html_content, re.DOTALL | re.IGNORECASE):
-                    # Clean the heading text
-                    heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
-                    if heading_text:
-                        heading_matches.append({
-                            'level': level,
-                            'text': heading_text,
-                            'position': match.start()
+            try:
+                # Parse HTML with BeautifulSoup
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                # Process the document elements sequentially
+                elements = []
+                
+                # First, find all headings with their positions
+                for i in range(1, 7):
+                    for heading in soup.find_all(f'h{i}'):
+                        text = heading.get_text().strip()
+                        if text:
+                            elements.append({
+                                'type': 'heading',
+                                'level': i,
+                                'text': text,
+                                'position': html_content.find(str(heading))
+                            })
+                
+                # Find all paragraphs with their positions
+                for p in soup.find_all('p'):
+                    text = p.get_text().strip()
+                    if text:
+                        elements.append({
+                            'type': 'paragraph',
+                            'text': text,
+                            'position': html_content.find(str(p))
                         })
+                
+                # Find all unordered lists with their positions
+                for ul in soup.find_all('ul'):
+                    # Skip nested lists
+                    if ul.find_parent(['ul', 'ol']) is None:
+                        items = []
+                        for li in ul.find_all('li', recursive=False):
+                            items.append(li.get_text().strip())
+                        
+                        if items:
+                            elements.append({
+                                'type': 'unordered_list',
+                                'items': items,
+                                'position': html_content.find(str(ul))
+                            })
+                
+                # Find all ordered lists with their positions
+                for ol in soup.find_all('ol'):
+                    # Skip nested lists
+                    if ol.find_parent(['ul', 'ol']) is None:
+                        items = []
+                        for li in ol.find_all('li', recursive=False):
+                            items.append(li.get_text().strip())
+                        
+                        if items:
+                            elements.append({
+                                'type': 'ordered_list',
+                                'items': items,
+                                'position': html_content.find(str(ol))
+                            })
+                
+                # Sort elements by their position in the document
+                elements = sorted([e for e in elements if e['position'] >= 0], key=lambda x: x['position'])
+                
+                # Log the number of elements found
+                logger.info(f"Found {len(elements)} elements in the document")
+                
+                # Now add them to the document in order
+                for element in elements:
+                    if element['type'] == 'heading':
+                        heading = doc.add_heading(element['text'], level=element['level'])
+                        # Style the heading based on level
+                        if element['level'] == 1:
+                            heading.runs[0].font.size = Pt(16)
+                            heading.runs[0].bold = True
+                        elif element['level'] == 2:
+                            heading.runs[0].font.size = Pt(14)
+                            heading.runs[0].bold = True
+                        elif element['level'] == 3:
+                            heading.runs[0].font.size = Pt(12)
+                            heading.runs[0].bold = True
+                            heading.runs[0].italic = True
+                        else:
+                            heading.runs[0].font.size = Pt(11)
+                            heading.runs[0].bold = True
+                            heading.runs[0].italic = True
+                        
+                        logger.info(f"Added heading level {element['level']}: {element['text'][:30]}...")
+                        
+                    elif element['type'] == 'paragraph':
+                        doc.add_paragraph(element['text'])
+                        
+                    elif element['type'] == 'unordered_list':
+                        for item in element['items']:
+                            doc.add_paragraph(item, style='List Bullet')
+                        
+                    elif element['type'] == 'ordered_list':
+                        for item in element['items']:
+                            doc.add_paragraph(item, style='List Number')
+                
+                # If we didn't find any content, extract text more aggressively
+                if len(elements) == 0:
+                    logger.warning("No structured content found, extracting text more aggressively")
+                    
+                    # Clean up HTML to improve text extraction
+                    cleaned_html = re.sub(r'<br\s*/?>', '\n', html_content)
+                    cleaned_html = re.sub(r'<p[^>]*>', '\n\n', cleaned_html)
+                    cleaned_html = re.sub(r'</p>', '\n', cleaned_html)
+                    cleaned_html = re.sub(r'<li[^>]*>', '\n• ', cleaned_html)
+                    cleaned_html = re.sub(r'</li>', '\n', cleaned_html)
+                    
+                    # Extract text, removing remaining HTML tags
+                    text_content = re.sub(r'<[^>]+>', '', cleaned_html)
+                    text_content = re.sub(r'\n{3,}', '\n\n', text_content)  # Normalize newlines
+                    
+                    # Add extracted text as paragraphs
+                    for paragraph in text_content.split('\n\n'):
+                        paragraph = paragraph.strip()
+                        if paragraph:
+                            lines = paragraph.split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                if line:
+                                    if line.startswith('• '):
+                                        doc.add_paragraph(line[2:], style='List Bullet')
+                                    else:
+                                        doc.add_paragraph(line)
             
-            # Add all headings first, sorted by position
-            if heading_matches:
-                heading_matches.sort(key=lambda x: x['position'])
-                for heading in heading_matches:
-                    heading_para = doc.add_heading(heading['text'], level=heading['level'])
-                    # Apply styling to headings
-                    if heading['level'] == 1:
-                        heading_para.runs[0].font.size = Pt(16)
-                    elif heading['level'] == 2:
-                        heading_para.runs[0].font.size = Pt(14)
-                    elif heading['level'] == 3:
-                        heading_para.runs[0].font.size = Pt(12)
-                        heading_para.runs[0].italic = True
-                    elif heading['level'] >= 4:
-                        heading_para.runs[0].font.size = Pt(11)
-                        heading_para.runs[0].italic = True
-            
-            # Step 2: Extract paragraphs and list items
-            # Remove HTML tags but preserve structure with newlines
-            text_content = re.sub(r'<br\s*/?>|</?p>|</?div>', '\n', html_content)
-            text_content = re.sub(r'<li>', '\n• ', text_content)  # Convert list items to bullet points
-            text_content = re.sub(r'</?[^>]+>', ' ', text_content)  # Remove all other HTML tags
-            text_content = re.sub(r'\s+', ' ', text_content)  # Normalize whitespace
-            text_content = re.sub(r'\n\s+', '\n', text_content)  # Clean up newlines
-            
-            # Split by newlines and add as paragraphs
-            paragraphs = [p.strip() for p in text_content.split('\n') if p.strip()]
-            
-            # Filter out paragraphs that are already in the headings
-            heading_texts = set(h['text'] for h in heading_matches)
-            paragraphs = [p for p in paragraphs if p not in heading_texts]
-            
-            # Add the paragraphs to the document
-            for para in paragraphs:
-                if para.startswith('• '):
-                    # This is a list item
-                    doc.add_paragraph(para[2:], style='List Bullet')
-                else:
-                    doc.add_paragraph(para)
+            except Exception as e:
+                logger.error(f"Error parsing HTML content: {e}")
+                logger.error(traceback.format_exc())
+                
+                # Fallback: try to extract pure text
+                try:
+                    # Remove all HTML tags and add text by paragraphs
+                    text_content = re.sub(r'<[^>]+>', ' ', html_content)
+                    text_content = re.sub(r'\s+', ' ', text_content).strip()
+                    
+                    # Break into paragraphs
+                    paragraphs = re.split(r'\.\s+', text_content)
+                    for para in paragraphs:
+                        para = para.strip()
+                        if para and len(para) > 20:  # Only add substantial paragraphs
+                            doc.add_paragraph(para + '.')
+                
+                except Exception as sub_e:
+                    logger.error(f"Fallback text extraction also failed: {sub_e}")
+                    doc.add_paragraph("Error extracting content from the article.")
         
         # Save document to memory stream
         doc_stream = BytesIO()
