@@ -2074,97 +2074,60 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # COMPLETELY REVISED: A simpler, more direct approach to HTML parsing
+        # FIX: Direct approach using BeautifulSoup to process HTML in proper order
         if article_content and isinstance(article_content, str):
-            # Log the first part of the article content to see what we're dealing with
-            logger.info(f"Article content first 500 chars: {article_content[:500]}")
-            
             # Check if content contains HTML
             if '<' in article_content and '>' in article_content:
-                # Parse HTML content with Beautiful Soup
+                # Parse the HTML
                 soup = BeautifulSoup(article_content, 'html.parser')
                 
-                # Log the HTML structure for debugging
-                logger.info(f"HTML structure: {soup.prettify()[:500]}")
+                # Directly add the H1 if it exists
+                h1_tag = soup.find('h1')
+                if h1_tag:
+                    doc.add_heading(h1_tag.get_text().strip(), level=1)
                 
-                # First extract all headings directly
-                headings = {}
-                for tag_name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                    level = int(tag_name[1])
-                    for heading in soup.find_all(tag_name):
-                        text = heading.get_text().strip()
-                        if text:
-                            # Add to document with correct level
-                            heading_obj = doc.add_heading(text, level=level)
-                            # Store in dictionary for debugging
-                            if tag_name not in headings:
-                                headings[tag_name] = []
-                            headings[tag_name].append(text)
-                            
-                            # For debugging
-                            logger.info(f"Added heading: {tag_name} - {text}")
-                            
-                            # Look for following paragraph content
-                            next_sibling = heading.find_next_sibling()
-                            while next_sibling and next_sibling.name not in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                if next_sibling.name == 'p':
-                                    p_text = next_sibling.get_text().strip()
-                                    if p_text:
-                                        doc.add_paragraph(p_text)
-                                elif next_sibling.name == 'ul':
-                                    for li in next_sibling.find_all('li'):
-                                        li_text = li.get_text().strip()
-                                        if li_text:
-                                            doc.add_paragraph(li_text, style='List Bullet')
-                                elif next_sibling.name == 'ol':
-                                    for li in next_sibling.find_all('li'):
-                                        li_text = li.get_text().strip()
-                                        if li_text:
-                                            doc.add_paragraph(li_text, style='List Number')
-                                
-                                next_sibling = next_sibling.find_next_sibling()
-                
-                # Log the extracted headings for debugging
-                for tag_name, texts in headings.items():
-                    logger.info(f"Extracted {len(texts)} {tag_name} headings: {texts}")
-                
-                # If no headings were found, we need to try a different approach
-                if not any(headings.values()):
-                    logger.warning("No headings found in HTML. Trying alternative approach")
-                    
-                    # Alternative approach: try to split the content by newlines and look for heading patterns
-                    lines = article_content.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if not line:
+                # Simple sequential processing of all elements
+                # This preserves the document structure without reorganizing
+                for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol']):
+                    if element.name.startswith('h') and len(element.name) == 2:
+                        # Skip H1 as we've already processed it
+                        if element.name == 'h1' and element == h1_tag:
                             continue
                         
-                        # Try to detect if this is a heading based on HTML tags
-                        heading_match = re.search(r'<h([1-6])>(.*?)</h\1>', line)
-                        if heading_match:
-                            level = int(heading_match.group(1))
-                            text = heading_match.group(2).strip()
-                            if text:
-                                doc.add_heading(text, level=level)
-                                logger.info(f"Added heading via regex: h{level} - {text}")
-                        # Otherwise, it's probably a paragraph
-                        elif not line.startswith('<') and not line.endswith('>'):
-                            # Clean up any HTML tags
-                            clean_line = re.sub(r'<.*?>', '', line).strip()
-                            if clean_line:
-                                doc.add_paragraph(clean_line)
+                        try:
+                            level = int(element.name[1])
+                            heading_text = element.get_text().strip()
+                            if heading_text:
+                                doc.add_heading(heading_text, level=level)
+                        except (ValueError, IndexError):
+                            # Fallback for parsing issues
+                            doc.add_paragraph(element.get_text().strip()).bold = True
+                    
+                    elif element.name == 'p':
+                        p_text = element.get_text().strip()
+                        if p_text:
+                            doc.add_paragraph(p_text)
+                    
+                    elif element.name == 'ul':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Bullet')
+                    
+                    elif element.name == 'ol':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Number')
             else:
-                # Content is plain text - try to identify headings by format
-                logger.info("Content appears to be plain text, looking for heading patterns")
+                # Plain text formatting
                 lines = article_content.split('\n')
-                in_list = False
-                
-                for i, line in enumerate(lines):
+                for line in lines:
                     line = line.strip()
                     if not line:
                         continue
-                    
-                    # Check for Markdown-style headings
+                        
+                    # Check for markdown-style headings
                     if line.startswith('# '):
                         doc.add_heading(line[2:], level=1)
                     elif line.startswith('## '):
@@ -2173,29 +2136,12 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                         doc.add_heading(line[4:], level=3)
                     elif line.startswith('#### '):
                         doc.add_heading(line[5:], level=4)
-                    # Check for list items
                     elif line.startswith('- ') or line.startswith('* '):
                         doc.add_paragraph(line[2:], style='List Bullet')
-                        in_list = True
-                    elif line.startswith('1. ') or line.startswith('1) '):
-                        doc.add_paragraph(line[3:], style='List Number')
-                        in_list = True
-                    # Check for potential heading (all caps, short line)
-                    elif line.isupper() and len(line) < 80:
-                        doc.add_heading(line, level=2)
-                    # Regular paragraph
+                    elif re.match(r'^\d+\.\s', line):
+                        doc.add_paragraph(line[line.find(' ')+1:], style='List Number')
                     else:
-                        # Check if this could be a non-markdown heading
-                        next_line = lines[i+1].strip() if i+1 < len(lines) else ""
-                        if (len(line) < 80 and next_line and 
-                            (all(c == '=' for c in next_line) or all(c == '-' for c in next_line))):
-                            # This looks like a heading with underline
-                            level = 1 if '=' in next_line else 2
-                            doc.add_heading(line, level=level)
-                        else:
-                            # Regular paragraph
-                            doc.add_paragraph(line)
-                            in_list = False
+                        doc.add_paragraph(line)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
@@ -3255,181 +3201,88 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add content heading
         doc.add_heading("Optimized Content", 1)
         
-        # IMPROVED: Direct, simpler approach to extract headings and content
+        # FIX: Direct approach using BeautifulSoup to process HTML in proper order
         if html_content and isinstance(html_content, str):
-            logger.info(f"Processing HTML content with length: {len(html_content)}")
-            
             # Check if content contains HTML
             if '<' in html_content and '>' in html_content:
-                # Parse HTML content with Beautiful Soup
+                # Parse the HTML
                 soup = BeautifulSoup(html_content, 'html.parser')
                 
-                # Log some debug information
-                logger.info(f"HTML structure overview: {soup.prettify()[:500]}")
+                # Directly add the H1 if it exists
+                h1_tag = soup.find('h1')
+                if h1_tag:
+                    h1_heading = doc.add_heading(h1_tag.get_text().strip(), level=1)
+                    h1_heading.runs[0].font.size = Pt(16)
+                    h1_heading.runs[0].bold = True
                 
-                # Direct extraction of headings and content, level by level
-                # First, extract H1
-                h1_headings = soup.find_all('h1')
-                for h1 in h1_headings:
-                    heading = doc.add_heading(h1.get_text().strip(), level=1)
-                    heading.runs[0].font.size = Pt(16)
-                    heading.runs[0].bold = True
-                
-                # Extract H2
-                h2_headings = soup.find_all('h2')
-                for h2 in h2_headings:
-                    # Add the heading
-                    heading = doc.add_heading(h2.get_text().strip(), level=2)
-                    heading.runs[0].font.size = Pt(14)
-                    heading.runs[0].bold = True
+                # Simple sequential processing of all elements
+                # This preserves the document structure without reorganizing
+                for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol']):
+                    if element.name.startswith('h') and len(element.name) == 2:
+                        # Skip H1 as we've already processed it
+                        if element.name == 'h1' and element == h1_tag:
+                            continue
+                        
+                        try:
+                            level = int(element.name[1])
+                            heading_text = element.get_text().strip()
+                            if heading_text:
+                                heading = doc.add_heading(heading_text, level=level)
+                                
+                                # Style the heading based on level
+                                if level == 2:
+                                    heading.runs[0].font.size = Pt(14)
+                                    heading.runs[0].bold = True
+                                elif level == 3:
+                                    heading.runs[0].font.size = Pt(12)
+                                    heading.runs[0].bold = True
+                                    heading.runs[0].italic = True
+                                elif level >= 4:
+                                    heading.runs[0].font.size = Pt(11)
+                                    heading.runs[0].bold = True
+                                    heading.runs[0].italic = True
+                        except (ValueError, IndexError):
+                            # Fallback for parsing issues
+                            doc.add_paragraph(element.get_text().strip()).bold = True
                     
-                    # Find content between this H2 and the next heading
-                    content_elements = []
-                    next_element = h2.next_sibling
-                    while next_element:
-                        if hasattr(next_element, 'name') and next_element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                            break
-                        if hasattr(next_element, 'name') and next_element.name in ['p', 'ul', 'ol']:
-                            content_elements.append(next_element)
-                        next_element = next_element.next_sibling
+                    elif element.name == 'p':
+                        p_text = element.get_text().strip()
+                        if p_text:
+                            doc.add_paragraph(p_text)
                     
-                    # Add the content elements
-                    for element in content_elements:
-                        if element.name == 'p':
-                            text = element.get_text().strip()
-                            if text:
-                                doc.add_paragraph(text)
-                        elif element.name == 'ul':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Bullet')
-                        elif element.name == 'ol':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Number')
-                
-                # Extract H3
-                h3_headings = soup.find_all('h3')
-                for h3 in h3_headings:
-                    # Add the heading
-                    heading = doc.add_heading(h3.get_text().strip(), level=3)
-                    heading.runs[0].font.size = Pt(12)
-                    heading.runs[0].bold = True
-                    heading.runs[0].italic = True
+                    elif element.name == 'ul':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Bullet')
                     
-                    # Find content between this H3 and the next heading
-                    content_elements = []
-                    next_element = h3.next_sibling
-                    while next_element:
-                        if hasattr(next_element, 'name') and next_element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                            break
-                        if hasattr(next_element, 'name') and next_element.name in ['p', 'ul', 'ol']:
-                            content_elements.append(next_element)
-                        next_element = next_element.next_sibling
-                    
-                    # Add the content elements
-                    for element in content_elements:
-                        if element.name == 'p':
-                            text = element.get_text().strip()
-                            if text:
-                                doc.add_paragraph(text)
-                        elif element.name == 'ul':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Bullet')
-                        elif element.name == 'ol':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Number')
-                
-                # Extract H4
-                h4_headings = soup.find_all('h4')
-                for h4 in h4_headings:
-                    # Add the heading
-                    heading = doc.add_heading(h4.get_text().strip(), level=4)
-                    heading.runs[0].font.size = Pt(11)
-                    heading.runs[0].bold = True
-                    heading.runs[0].italic = True
-                    
-                    # Find content between this H4 and the next heading
-                    content_elements = []
-                    next_element = h4.next_sibling
-                    while next_element:
-                        if hasattr(next_element, 'name') and next_element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                            break
-                        if hasattr(next_element, 'name') and next_element.name in ['p', 'ul', 'ol']:
-                            content_elements.append(next_element)
-                        next_element = next_element.next_sibling
-                    
-                    # Add the content elements
-                    for element in content_elements:
-                        if element.name == 'p':
-                            text = element.get_text().strip()
-                            if text:
-                                doc.add_paragraph(text)
-                        elif element.name == 'ul':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Bullet')
-                        elif element.name == 'ol':
-                            for li in element.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Number')
-                
-                # If we didn't find any headings through the direct approach, try an alternative method
-                if not (h1_headings or h2_headings or h3_headings or h4_headings):
-                    logger.warning("No headings found with direct approach. Trying alternative method.")
-                    
-                    # Alternative: extract all text nodes and look for heading patterns
-                    for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol']):
-                        if tag.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                            level = int(tag.name[1])
-                            text = tag.get_text().strip()
-                            if text:
-                                doc.add_heading(text, level=level)
-                        elif tag.name == 'p':
-                            text = tag.get_text().strip()
-                            if text:
-                                doc.add_paragraph(text)
-                        elif tag.name == 'ul':
-                            for li in tag.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Bullet')
-                        elif tag.name == 'ol':
-                            for li in tag.find_all('li'):
-                                text = li.get_text().strip()
-                                if text:
-                                    doc.add_paragraph(text, style='List Number')
+                    elif element.name == 'ol':
+                        for li in element.find_all('li', recursive=False):
+                            li_text = li.get_text().strip()
+                            if li_text:
+                                doc.add_paragraph(li_text, style='List Number')
             else:
-                # Plain text handling
-                logger.info("Content appears to be plain text. Processing line by line.")
+                # Plain text formatting
                 lines = html_content.split('\n')
                 for line in lines:
                     line = line.strip()
                     if not line:
                         continue
-                    
-                    # Try to guess if this is a heading based on length and formatting
-                    if len(line) < 80:
-                        if line.startswith('#'):  # Markdown style
-                            heading_level = len(re.match(r'^#+', line).group(0))
-                            heading_text = line.lstrip('#').strip()
-                            if heading_text:
-                                doc.add_heading(heading_text, level=min(heading_level, 6))
-                        elif line.isupper():  # ALL CAPS might be a heading
-                            doc.add_heading(line, level=2)
-                        elif re.match(r'^[A-Z][\w\s]+[:.?!]$', line):  # Title Case with ending punctuation
-                            doc.add_heading(line, level=3)
-                        else:  # Regular paragraph
-                            doc.add_paragraph(line)
-                    else:  # Regular paragraph
+                        
+                    # Check for markdown-style headings
+                    if line.startswith('# '):
+                        doc.add_heading(line[2:], level=1)
+                    elif line.startswith('## '):
+                        doc.add_heading(line[3:], level=2)
+                    elif line.startswith('### '):
+                        doc.add_heading(line[4:], level=3)
+                    elif line.startswith('#### '):
+                        doc.add_heading(line[5:], level=4)
+                    elif line.startswith('- ') or line.startswith('* '):
+                        doc.add_paragraph(line[2:], style='List Bullet')
+                    elif re.match(r'^\d+\.\s', line):
+                        doc.add_paragraph(line[line.find(' ')+1:], style='List Number')
+                    else:
                         doc.add_paragraph(line)
         
         # Save document to memory stream
