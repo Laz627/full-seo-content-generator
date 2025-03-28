@@ -2142,131 +2142,89 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # COMPLETELY REVISED: More thorough HTML parsing and handling
+        # COMPLETELY DIFFERENT APPROACH: Line-by-line processing
         if article_content and isinstance(article_content, str):
-            try:
-                # Parse HTML with BeautifulSoup
-                soup = BeautifulSoup(article_content, 'html.parser')
-                
-                # Process the document elements sequentially
-                elements = []
-                
-                # First, find all headings with their positions
-                for i in range(1, 7):
-                    for heading in soup.find_all(f'h{i}'):
-                        text = heading.get_text().strip()
-                        if text:
-                            elements.append({
-                                'type': 'heading',
-                                'level': i,
-                                'text': text,
-                                'position': article_content.find(str(heading))
-                            })
-                
-                # Find all paragraphs with their positions
-                for p in soup.find_all('p'):
-                    text = p.get_text().strip()
-                    if text:
-                        elements.append({
-                            'type': 'paragraph',
-                            'text': text,
-                            'position': article_content.find(str(p))
-                        })
-                
-                # Find all unordered lists with their positions
-                for ul in soup.find_all('ul'):
-                    # Skip nested lists
-                    if ul.find_parent(['ul', 'ol']) is None:
-                        items = []
-                        for li in ul.find_all('li', recursive=False):
-                            items.append(li.get_text().strip())
-                        
-                        if items:
-                            elements.append({
-                                'type': 'unordered_list',
-                                'items': items,
-                                'position': article_content.find(str(ul))
-                            })
-                
-                # Find all ordered lists with their positions
-                for ol in soup.find_all('ol'):
-                    # Skip nested lists
-                    if ol.find_parent(['ul', 'ol']) is None:
-                        items = []
-                        for li in ol.find_all('li', recursive=False):
-                            items.append(li.get_text().strip())
-                        
-                        if items:
-                            elements.append({
-                                'type': 'ordered_list',
-                                'items': items,
-                                'position': article_content.find(str(ol))
-                            })
-                
-                # Sort elements by their position in the document
-                elements = sorted([e for e in elements if e['position'] >= 0], key=lambda x: x['position'])
-                
-                # Now add them to the document in order
-                for element in elements:
-                    if element['type'] == 'heading':
-                        doc.add_heading(element['text'], level=element['level'])
-                    elif element['type'] == 'paragraph':
-                        doc.add_paragraph(element['text'])
-                    elif element['type'] == 'unordered_list':
-                        for item in element['items']:
-                            doc.add_paragraph(item, style='List Bullet')
-                    elif element['type'] == 'ordered_list':
-                        for item in element['items']:
-                            doc.add_paragraph(item, style='List Number')
-                
-                # If we didn't find any content, extract text more aggressively
-                if len(elements) == 0:
-                    logger.warning("No structured content found, extracting text more aggressively")
-                    
-                    # Clean up HTML to improve text extraction
-                    cleaned_html = re.sub(r'<br\s*/?>', '\n', article_content)
-                    cleaned_html = re.sub(r'<p[^>]*>', '\n\n', cleaned_html)
-                    cleaned_html = re.sub(r'</p>', '\n', cleaned_html)
-                    cleaned_html = re.sub(r'<li[^>]*>', '\n• ', cleaned_html)
-                    cleaned_html = re.sub(r'</li>', '\n', cleaned_html)
-                    
-                    # Extract text, removing remaining HTML tags
-                    text_content = re.sub(r'<[^>]+>', '', cleaned_html)
-                    text_content = re.sub(r'\n{3,}', '\n\n', text_content)  # Normalize newlines
-                    
-                    # Add extracted text as paragraphs
-                    for paragraph in text_content.split('\n\n'):
-                        paragraph = paragraph.strip()
-                        if paragraph:
-                            lines = paragraph.split('\n')
-                            for line in lines:
-                                line = line.strip()
-                                if line:
-                                    if line.startswith('• '):
-                                        doc.add_paragraph(line[2:], style='List Bullet')
-                                    else:
-                                        doc.add_paragraph(line)
+            # Split the content by lines
+            lines = article_content.split('\n')
             
-            except Exception as e:
-                logger.error(f"Error parsing HTML content: {e}")
-                logger.error(traceback.format_exc())
+            # Process each line
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
                 
-                # Fallback: try to extract pure text
-                try:
-                    # Remove all HTML tags and add text by paragraphs
-                    text_content = re.sub(r'<[^>]+>', ' ', article_content)
-                    text_content = re.sub(r'\s+', ' ', text_content).strip()
-                    
-                    # Break into paragraphs
-                    paragraphs = re.split(r'\.\s+', text_content)
-                    for para in paragraphs:
-                        para = para.strip()
-                        if para and len(para) > 20:  # Only add substantial paragraphs
-                            doc.add_paragraph(para + '.')
+                # Check if this line is a heading tag
+                h1_match = re.match(r'^<h1[^>]*>(.*?)</h1>$', line, re.IGNORECASE)
+                h2_match = re.match(r'^<h2[^>]*>(.*?)</h2>$', line, re.IGNORECASE)
+                h3_match = re.match(r'^<h3[^>]*>(.*?)</h3>$', line, re.IGNORECASE)
+                h4_match = re.match(r'^<h4[^>]*>(.*?)</h4>$', line, re.IGNORECASE)
+                h5_match = re.match(r'^<h5[^>]*>(.*?)</h5>$', line, re.IGNORECASE)
+                h6_match = re.match(r'^<h6[^>]*>(.*?)</h6>$', line, re.IGNORECASE)
                 
-                except Exception as sub_e:
-                    logger.error(f"Fallback text extraction also failed: {sub_e}")
-                    doc.add_paragraph("Error extracting content from the article.")
+                # Process heading matches
+                if h1_match:
+                    heading_text = h1_match.group(1)
+                    # Remove any HTML tags inside the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=1)
+                elif h2_match:
+                    heading_text = h2_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=2)
+                elif h3_match:
+                    heading_text = h3_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=3)
+                elif h4_match:
+                    heading_text = h4_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=4)
+                elif h5_match:
+                    heading_text = h5_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=5)
+                elif h6_match:
+                    heading_text = h6_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    doc.add_heading(heading_text, level=6)
+                
+                # Check if this line is a paragraph tag
+                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
+                    # Extract paragraph content
+                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
+                    if para_match:
+                        para_text = para_match.group(1)
+                        # Remove any HTML tags inside the paragraph
+                        para_text = re.sub(r'<[^>]+>', '', para_text).strip()
+                        if para_text:
+                            doc.add_paragraph(para_text)
+                
+                # Check if this line is a list item
+                elif re.match(r'^<li[^>]*>', line, re.IGNORECASE) and '</li>' in line.lower():
+                    # Extract list item content
+                    li_match = re.match(r'^<li[^>]*>(.*?)</li>$', line, re.IGNORECASE)
+                    if li_match:
+                        li_text = li_match.group(1)
+                        # Remove any HTML tags inside the list item
+                        li_text = re.sub(r'<[^>]+>', '', li_text).strip()
+                        if li_text:
+                            doc.add_paragraph(li_text, style='List Bullet')
+                
+                # Check if this is just an HTML tag without matching closing tag
+                elif re.match(r'^<[^>]+>$', line):
+                    # Skip standalone HTML tags
+                    continue
+                
+                # If it's not a recognized HTML element, treat as plain text
+                elif not re.match(r'^<', line):
+                    doc.add_paragraph(line)
+                
+                # Otherwise, it might be a complex HTML block or something else
+                else:
+                    # Try to extract text from inside HTML tags
+                    clean_text = re.sub(r'<[^>]+>', '', line).strip()
+                    if clean_text:
+                        doc.add_paragraph(clean_text)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
