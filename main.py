@@ -3465,7 +3465,7 @@ def main():
                         # Analyze semantic structure
                         st.text("Analyzing semantic structure...")
                         semantic_structure, structure_success = analyze_semantic_structure(
-                            scraped_contents, openai_api_key
+                            scraped_contents, anthropic_api_key
                         )
                         
                         if structure_success:
@@ -3474,7 +3474,7 @@ def main():
                             # Extract important terms (new content scoring feature)
                             st.text("Extracting important terms and topics...")
                             term_data, term_success = extract_important_terms(
-                                scraped_contents, openai_api_key
+                                scraped_contents, anthropic_api_key
                             )
                             
                             if term_success:
@@ -3597,7 +3597,7 @@ def main():
                                 st.session_state.results['semantic_structure'],
                                 st.session_state.results.get('related_keywords', []),
                                 term_data,
-                                openai_api_key
+                                anthropic_api_key
                             )
                             
                             if meta_success:
@@ -4264,7 +4264,7 @@ def main():
                             
                             term_data, success = extract_important_terms(
                                 st.session_state.results['scraped_contents'], 
-                                openai_api_key
+                                anthropic_api_key
                             )
                             
                             if success and term_data:
