@@ -8,6 +8,7 @@ import re
 from bs4 import BeautifulSoup
 import trafilatura
 import openai
+import anthropic
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
@@ -245,21 +246,6 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
 # 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
-def create_default_keywords(keyword: str) -> List[Dict]:
-    """Create default related keywords when API fails"""
-    return [
-        {'keyword': f"{keyword} guide", 'search_volume': 100, 'cpc': 0.5, 'competition': 0.3},
-        {'keyword': f"best {keyword}", 'search_volume': 90, 'cpc': 0.6, 'competition': 0.4},
-        {'keyword': f"{keyword} tutorial", 'search_volume': 80, 'cpc': 0.4, 'competition': 0.3},
-        {'keyword': f"how to use {keyword}", 'search_volume': 70, 'cpc': 0.3, 'competition': 0.2},
-        {'keyword': f"{keyword} benefits", 'search_volume': 60, 'cpc': 0.5, 'competition': 0.3},
-        {'keyword': f"{keyword} examples", 'search_volume': 50, 'cpc': 0.4, 'competition': 0.2},
-        {'keyword': f"{keyword} tips", 'search_volume': 40, 'cpc': 0.3, 'competition': 0.2},
-        {'keyword': f"free {keyword}", 'search_volume': 100, 'cpc': 0.7, 'competition': 0.5},
-        {'keyword': f"{keyword} alternatives", 'search_volume': 80, 'cpc': 0.8, 'competition': 0.6},
-        {'keyword': f"{keyword} vs", 'search_volume': 90, 'cpc': 0.9, 'competition': 0.7}
-    ]
-
 def fetch_keyword_suggestions(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
     Fetch keyword suggestions from DataForSEO to get accurate search volume data
@@ -300,7 +286,7 @@ def fetch_keyword_suggestions(keyword: str, api_login: str, api_password: str) -
             # Validate response
             if data.get('status_code') != 20000 or not data.get('tasks') or len(data['tasks']) == 0:
                 logger.warning(f"Invalid API response: {data.get('status_message')}")
-                return create_default_keywords(keyword), False
+                return [], False
             
             keyword_suggestions = []
             
@@ -342,17 +328,17 @@ def fetch_keyword_suggestions(keyword: str, api_login: str, api_password: str) -
                 return keyword_suggestions, True
             else:
                 logger.warning(f"No keyword suggestions found in the response")
-                return create_default_keywords(keyword), False
+                return [], False
         else:
             error_msg = f"HTTP Error: {response.status_code} - {response.text}"
             logger.error(error_msg)
-            return create_default_keywords(keyword), False
+            return [], False
     
     except Exception as e:
         error_msg = f"Exception in fetch_keyword_suggestions: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return create_default_keywords(keyword), False
+        return [], False
 
 def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
     """
@@ -549,16 +535,16 @@ def extract_headings(url: str) -> Dict[str, List[str]]:
         return {'h1': [], 'h2': [], 'h3': []}
 
 ###############################################################################
-# 5. Content Scoring Functions (NEW)
+# 5. Content Scoring Functions
 ###############################################################################
 
-def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str) -> Tuple[Dict, bool]:
+def extract_important_terms(competitor_contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
     """
-    Extract important terms and topics from competitor content using NLP analysis
+    Extract important terms and topics from competitor content using Claude 3.7 Sonnet
     Returns: term_data, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Combine all content for analysis
         combined_content = "\n\n".join([c.get('content', '') for c in competitor_contents if c.get('content')])
@@ -567,11 +553,12 @@ def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str
         if len(combined_content) > 10000:
             combined_content = combined_content[:10000]
         
-        # Use OpenAI to analyze content and extract important terms
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content and extract important terms
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=1500,
+            system="You are an SEO expert specializing in content analysis.",
             messages=[
-                {"role": "system", "content": "You are an SEO expert specializing in content analysis."},
                 {"role": "user", "content": f"""
                 Analyze the following content from top-ranking pages and extract:
                 
@@ -612,7 +599,7 @@ def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
@@ -1174,13 +1161,13 @@ def create_content_scoring_brief(keyword: str, term_data: Dict, score_data: Dict
 ###############################################################################
 
 def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], term_data: Dict, 
-                      openai_api_key: str) -> Tuple[str, str, bool]:
+                      anthropic_api_key: str) -> Tuple[str, str, bool]:
     """
     Generate optimized meta title and description for the content
     Returns: meta_title, meta_description, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract H1 and first few sections for context
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
@@ -1196,10 +1183,11 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         primary_terms_str = ", ".join(primary_terms) if primary_terms else top_keywords
         
         # Generate meta tags
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=300,
+            system="You are an SEO specialist who creates optimized meta tags.",
             messages=[
-                {"role": "system", "content": "You are an SEO specialist who creates optimized meta tags."},
                 {"role": "user", "content": f"""
                 Create an SEO-optimized meta title and description for an article about "{keyword}".
                 
@@ -1225,7 +1213,7 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -1280,13 +1268,13 @@ def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedd
         logger.error(error_msg)
         return [], False
 
-def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tuple[Dict, bool]:
+def analyze_semantic_structure(contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
     """
     Analyze semantic structure of content to determine optimal hierarchy
     Returns: semantic_analysis, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Combine all content for analysis
         combined_content = "\n\n".join([c.get('content', '') for c in contents if c.get('content')])
@@ -1295,11 +1283,12 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
         if len(combined_content) > 10000:
             combined_content = combined_content[:10000]
         
-        # Use OpenAI to analyze content and suggest headings structure
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content and suggest headings structure
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=1000,
+            system="You are an SEO expert specializing in content structure.",
             messages=[
-                {"role": "system", "content": "You are an SEO expert specializing in content structure."},
                 {"role": "user", "content": f"""
                 Analyze the following content from top-ranking pages and recommend an optimal semantic hierarchy 
                 for a new article on this topic. Include:
@@ -1331,7 +1320,7 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -1351,15 +1340,15 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
-                     openai_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
+                     anthropic_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
     """
     Generate comprehensive article with natural language flow and balanced keyword usage.
     If guidance_only is True, will generate writing guidance instead of full content.
-    Uses term_data to optimize for important terms.
+    Uses Claude 3.7 Sonnet to optimize for important terms and proper length.
     Returns: article_content, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Ensure semantic_structure is valid
         if not semantic_structure:
@@ -1452,10 +1441,11 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         if guidance_only:
             # Generate writing guidance for each section
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=2500,
+                system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
-                    {"role": "system", "content": "You are an expert SEO content strategist who provides detailed writing guidance."},
                     {"role": "user", "content": f"""
                     Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
                     
@@ -1495,28 +1485,29 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
                     
-                    Aim for comprehensive guidance that will help a writer create a 1,800-2,200 word article.
+                    Aim for comprehensive guidance that will help a writer create a 1,500-2,000 word article.
                     """}
                 ],
                 temperature=0.5
             )
             
-            guidance_content = response.choices[0].message.content
+            guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # Generate full article with balanced keyword usage and no redundant questions
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            # Generate full article with balanced keyword usage and target word count
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=4500,
+                system="""You are an expert content writer crafting engaging, informative articles.
+                Write in a natural, conversational style that sounds like an experienced human writer.
+                
+                Key writing principles:
+                1. Write clear, direct content that informs and engages the reader
+                2. Use language that flows naturally without sounding formulaic
+                3. Create content that's substantive and detailed
+                4. Balance keyword usage with natural variation""",
+                
                 messages=[
-                    {"role": "system", "content": f"""You are an expert content writer crafting engaging, informative articles.
-                    Write in a natural, conversational style that sounds like an experienced human writer.
-                    
-                    Key writing principles:
-                    1. Write clear, direct content that informs and engages the reader
-                    2. Use language that flows naturally without sounding formulaic
-                    3. Create content that's substantive and detailed
-                    4. Balance keyword usage with natural variation"""},
-                    
                     {"role": "user", "content": f"""
                     Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
                     
@@ -1527,13 +1518,13 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     {sections_str}
                     
                     Content requirements:
-                    1. Create substantive paragraphs with thorough information (150+ words per section)
-                    2. Include specific examples, practical details, and evidence
+                    1. Create substantive paragraphs that efficiently convey information
+                    2. Include specific examples and practical details
                     3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
                     4. IMPORTANT DIRECTION ON KEYWORD USAGE:
                        - Use the exact term "{keyword}" naturally throughout the text
-                       - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
-                       - DO NOT force awkward substitutions or consistently avoid the main term
+                       - Occasionally use natural variations when it improves readability
+                       - DO NOT force awkward substitutions or avoid the main term
                        
                     5. Write with natural transitions between ideas without relying on transition phrases
                     6. Vary sentence structure - mix simple, compound, and complex sentences
@@ -1554,7 +1545,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     
                     CRITICAL WRITING INSTRUCTIONS:
                     1. DO NOT use rhetorical questions in the content, especially:
-                       - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
+                       - NEVER start paragraphs with questions
                        - DO NOT repeat the heading as a question in the paragraph
                        - AVOID using questions to transition between topics
                     
@@ -1574,13 +1565,14 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Paragraphs in <p> tags
                     - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                     
-                    Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
+                    STRICTLY adhere to a 1,500-2,000 word count total - this is CRITICAL. 
+                    Be concise but comprehensive, focusing on quality information rather than length.
                     """}
                 ],
-                temperature=0.5  # Lower temperature for more controlled output
+                temperature=0.5
             )
             
-            article_content = response.choices[0].message.content
+            article_content = response.content[0].text
             return article_content, True
     
     except Exception as e:
@@ -1812,12 +1804,14 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 page_title = best_page.get('title', '')
                 para_text = paragraph['text']
                 
-                # Ask GPT to identify a good anchor text from the paragraph that relates to the page title
+                # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
                 try:
-                    anchor_response = openai.ChatCompletion.create(
-                        model="gpt-4o-mini",
+                    client = anthropic.Anthropic(api_key=openai_api_key)
+                    anchor_response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=50,
+                        system="You are an expert at identifying semantically relevant anchor text for links.",
                         messages=[
-                            {"role": "system", "content": "You are an expert at identifying semantically relevant anchor text for links."},
                             {"role": "user", "content": f"""
                             Find the BEST 2-6 word phrase in this paragraph that would make a semantically relevant anchor text for a page titled "{page_title}".
                             
@@ -1838,7 +1832,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                         temperature=0.3
                     )
                     
-                    anchor_text = anchor_response.choices[0].message.content.strip()
+                    anchor_text = anchor_response.content[0].text.strip()
                     anchor_text = anchor_text.strip('"\'')  # Remove quotes if present
                     
                     # Verify the anchor text exists in the paragraph
@@ -2251,14 +2245,14 @@ def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
         return {}, False
 
 def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
-                        term_data: Dict, score_data: Dict, openai_api_key: str, 
+                        term_data: Dict, score_data: Dict, anthropic_api_key: str, 
                         keyword: str, paa_questions: List[Dict] = None) -> Tuple[Dict, bool]:
     """
     Enhanced content gap analysis that incorporates content scoring data
     Returns: content_gaps, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract existing headings
         existing_headings = [h['text'] for h in existing_content.get('headings', [])]
@@ -2371,11 +2365,12 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                     description = topic_info.get('description', '')
                     term_data_text += f"- {topic}: {description}\n"
         
-        # Use OpenAI to analyze content gaps with improved prompting that includes content scoring data
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content gaps
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=2500,
+            system="You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues.",
             messages=[
-                {"role": "system", "content": "You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues."},
                 {"role": "user", "content": f"""
                 Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
                 
@@ -2453,7 +2448,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -2776,13 +2771,13 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
                               keyword: str, paa_questions: List[Dict], term_data: Dict,
-                              openai_api_key: str, target_word_count: int = 1500) -> Tuple[str, str, bool]:
+                              anthropic_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
     """
-    Enhanced article generation that incorporates term data
+    Enhanced article generation that incorporates term data using Claude 3.7 Sonnet
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract existing content structure
         original_content = existing_content.get('full_text', '')
@@ -2868,10 +2863,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 break
                 
             # Find most relevant original heading for this section
-            matching_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            matching_response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=50,
+                system="You are an expert at matching content sections.",
                 messages=[
-                    {"role": "system", "content": "You are an expert at matching content sections."},
                     {"role": "user", "content": f"""
                         Find the most relevant heading from the original content that matches this new section:
                         
@@ -2886,7 +2882,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 temperature=0.1
             )
             
-            matching_heading = matching_response.choices[0].message.content.strip()
+            matching_heading = matching_response.content[0].text.strip()
             optimized_sections.append(f"<h2>{h2}</h2>")
             current_word_count += len(h2.split())
             
@@ -2902,10 +2898,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new section with controlled length
-                section_content_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
+                section_content_response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
+                    system="You are an expert content writer focused on concise, informative content.",
                     messages=[
-                        {"role": "system", "content": "You are an expert content writer focused on concise, informative content."},
                         {"role": "user", "content": f"""
                             Write content for this section about "{keyword}": {h2}
                             
@@ -2931,7 +2928,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     temperature=0.4
                 )
                 
-                new_section_content = section_content_response.choices[0].message.content
+                new_section_content = section_content_response.content[0].text
                 optimized_sections.append(new_section_content)
                 
                 # Estimate added word count
@@ -2948,10 +2945,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 original_section_content = section_content.get(matching_heading, '')
                 
                 # Enhance this section with strict word count limit
-                enhanced_section_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
+                enhanced_section_response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML and improvements
+                    system="You are an expert at enhancing content while preserving value and maintaining conciseness.",
                     messages=[
-                        {"role": "system", "content": "You are an expert at enhancing content while preserving value and maintaining conciseness."},
                         {"role": "user", "content": f"""
                             Enhance this original content section while PRESERVING its value.
                             
@@ -2984,7 +2982,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     temperature=0.3
                 )
                 
-                enhanced_response = enhanced_section_response.choices[0].message.content
+                enhanced_response = enhanced_section_response.content[0].text
                 
                 # Extract improvements summary
                 improvements_summary = ""
@@ -3025,10 +3023,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     current_word_count += len(h3.split())
                     
                     # Generate content for this subsection with strict word limit
-                    subsection_content_response = openai.ChatCompletion.create(
-                        model="gpt-4o-mini",
+                    subsection_content_response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=subsection_word_limit * 2,  # Allow some extra tokens for HTML
+                        system="You are an expert content writer focused on brevity and impact.",
                         messages=[
-                            {"role": "system", "content": "You are an expert content writer focused on brevity and impact."},
                             {"role": "user", "content": f"""
                                 Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
                                 
@@ -3047,7 +3046,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                         temperature=0.4
                     )
                     
-                    subsection_content = subsection_content_response.choices[0].message.content
+                    subsection_content = subsection_content_response.content[0].text
                     optimized_sections.append(subsection_content)
                     
                     # Estimate added word count
@@ -3061,12 +3060,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         if current_word_count < (target_word_count * 0.95):
             optimized_sections.append("<h2>Conclusion</h2>")
             
-            conclusion_word_limit = target_word_count - current_word_count
+            conclusion_word_limit = min(200, target_word_count - current_word_count)
             
-            conclusion_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            conclusion_response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=conclusion_word_limit * 2,  # Allow some extra tokens for HTML
+                system="You are an expert at writing concise, impactful conclusions.",
                 messages=[
-                    {"role": "system", "content": "You are an expert at writing concise, impactful conclusions."},
                     {"role": "user", "content": f"""
                         Write a brief conclusion for an article about "{keyword}".
                         
@@ -3083,7 +3083,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 temperature=0.4
             )
             
-            conclusion_content = conclusion_response.choices[0].message.content
+            conclusion_content = conclusion_response.content[0].text
             optimized_sections.append(conclusion_content)
         
         # Create final document with change summary
@@ -3258,6 +3258,7 @@ def main():
     dataforseo_password = st.sidebar.text_input("DataForSEO API Password", type="password")
     
     openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+    anthropic_api_key = st.sidebar.text_input("Anthropic API Key", type="password")
     
     # Initialize session state
     if 'results' not in st.session_state:
@@ -3271,7 +3272,7 @@ def main():
         "Internal Linking", 
         "SEO Brief",
         "Content Updates",
-        "Content Scoring"  # New tab
+        "Content Scoring"
     ])
     
     # Tab 1: Input & SERP Analysis
@@ -3284,8 +3285,8 @@ def main():
                 st.error("Please enter a target keyword")
             elif not dataforseo_login or not dataforseo_password:
                 st.error("Please enter DataForSEO API credentials")
-            elif not openai_api_key:
-                st.error("Please enter OpenAI API key")
+            elif not openai_api_key or not anthropic_api_key:
+                st.error("Please enter API keys for OpenAI and Anthropic")
             else:
                 with st.spinner("Fetching SERP data..."):
                     # Fetch SERP results (updated function with PAA questions)
@@ -3366,8 +3367,8 @@ def main():
             st.warning("Please fetch SERP data first (in the 'Input & SERP Analysis' tab)")
         else:
             if st.button("Analyze Content"):
-                if not openai_api_key:
-                    st.error("Please enter OpenAI API key")
+                if not anthropic_api_key:
+                    st.error("Please enter Anthropic API key")
                 else:
                     with st.spinner("Analyzing content from top-ranking pages..."):
                         start_time = time.time()
@@ -3401,19 +3402,19 @@ def main():
                             
                         st.session_state.results['scraped_contents'] = scraped_contents
                         
-                        # Analyze semantic structure
+                        # Analyze semantic structure using Claude
                         st.text("Analyzing semantic structure...")
                         semantic_structure, structure_success = analyze_semantic_structure(
-                            scraped_contents, openai_api_key
+                            scraped_contents, anthropic_api_key
                         )
                         
                         if structure_success:
                             st.session_state.results['semantic_structure'] = semantic_structure
                             
-                            # Extract important terms (new content scoring feature)
+                            # Extract important terms using Claude
                             st.text("Extracting important terms and topics...")
                             term_data, term_success = extract_important_terms(
-                                scraped_contents, openai_api_key
+                                scraped_contents, anthropic_api_key
                             )
                             
                             if term_success:
@@ -3499,8 +3500,8 @@ def main():
             guidance_only = (content_type == "Writing Guidance Only")
             
             if st.button("Generate " + ("Content Guidance" if guidance_only else "Article") + " and Meta Tags"):
-                if not openai_api_key:
-                    st.error("Please enter OpenAI API key")
+                if not anthropic_api_key:
+                    st.error("Please enter Anthropic API key")
                 else:
                     with st.spinner("Generating " + ("content guidance" if guidance_only else "article") + " and meta tags..."):
                         start_time = time.time()
@@ -3508,7 +3509,7 @@ def main():
                         # Use term data if available
                         term_data = st.session_state.results.get('term_data', {})
                         
-                        # Generate article or guidance (with term_data parameter)
+                        # Generate article or guidance using Claude
                         article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
@@ -3516,7 +3517,7 @@ def main():
                             st.session_state.results.get('serp_features', []),
                             st.session_state.results.get('paa_questions', []),
                             term_data,
-                            openai_api_key,
+                            anthropic_api_key,
                             guidance_only
                         )
                         
@@ -3530,13 +3531,13 @@ def main():
                             # Store the guidance flag
                             st.session_state.results['guidance_only'] = guidance_only
                             
-                            # Generate meta title and description with term data
+                            # Generate meta title and description with Claude
                             meta_title, meta_description, meta_success = generate_meta_tags(
                                 st.session_state.results['keyword'],
                                 st.session_state.results['semantic_structure'],
                                 st.session_state.results.get('related_keywords', []),
                                 term_data,
-                                openai_api_key
+                                anthropic_api_key
                             )
                             
                             if meta_success:
@@ -3547,7 +3548,7 @@ def main():
                                 st.write(f"**Meta Title:** {meta_title}")
                                 st.write(f"**Meta Description:** {meta_description}")
                             
-                            # Score the content if it's a full article (new feature)
+                            # Score the content if it's a full article
                             if not guidance_only and 'term_data' in st.session_state.results:
                                 try:
                                     score_data, score_success = score_content(
@@ -3666,7 +3667,9 @@ def main():
             
             if st.button("Generate Internal Links"):
                 if not openai_api_key:
-                    st.error("Please enter OpenAI API key")
+                    st.error("Please enter OpenAI API key for embeddings")
+                elif not anthropic_api_key:
+                    st.error("Please enter Anthropic API key for anchor text selection")
                 elif not pages_file:
                     st.error("Please upload a spreadsheet with site pages")
                 else:
@@ -3681,7 +3684,7 @@ def main():
                             status_text = st.empty()
                             status_text.text(f"Generating embeddings for {len(pages)} site pages...")
                             
-                            # Generate embeddings for site pages
+                            # Generate embeddings for site pages using OpenAI
                             pages_with_embeddings, embed_success = embed_site_pages(
                                 pages, openai_api_key, batch_size
                             )
@@ -3693,9 +3696,9 @@ def main():
                                 
                                 status_text.text(f"Analyzing article content and generating internal links...")
                                 
-                                # Generate internal links (updated function)
+                                # Generate internal links using OpenAI for embeddings and Claude for anchor text
                                 article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
-                                    article_content, pages_with_embeddings, openai_api_key, word_count
+                                    article_content, pages_with_embeddings, anthropic_api_key, word_count
                                 )
                                 
                                 if links_success:
@@ -3777,7 +3780,7 @@ def main():
                     term_data = st.session_state.results.get('term_data', None)
                     score_data = st.session_state.results.get('content_score', None)
                     
-                    # Create Word document (enhanced with term_data and score_data)
+                    # Create Word document with enhanced Claude content
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
                         st.session_state.results['organic_results'],
@@ -3860,8 +3863,8 @@ def main():
             )
             
             if st.button("Generate Content Updates"):
-                if not openai_api_key:
-                    st.error("Please enter OpenAI API key")
+                if not anthropic_api_key:
+                    st.error("Please enter Anthropic API key")
                 elif not content_file:
                     st.error("Please upload a content document")
                 else:
@@ -3888,14 +3891,14 @@ def main():
                                 if score_success:
                                     st.session_state.results['existing_content_score'] = score_data
                             
-                            # Enhanced content gap analysis with term data and score data
+                            # Enhanced content gap analysis with Claude
                             content_gaps, gap_success = analyze_content_gaps(
                                 existing_content,
                                 st.session_state.results['scraped_contents'],
                                 st.session_state.results['semantic_structure'],
                                 term_data,
                                 score_data if score_data else {},
-                                openai_api_key,
+                                anthropic_api_key,
                                 st.session_state.results['keyword'],
                                 st.session_state.results.get('paa_questions', [])
                             )
@@ -3906,7 +3909,7 @@ def main():
                                 st.session_state.results['content_gaps'] = content_gaps
                                 
                                 if update_type == "Recommendations Only":
-                                    # Create updated document with recommendations (enhanced with score data)
+                                    # Create updated document with recommendations
                                     updated_doc, doc_success = create_updated_document(
                                         existing_content,
                                         content_gaps,
@@ -3996,7 +3999,7 @@ def main():
                                         st.error("Failed to create updated document")
                                 
                                 else:  # Generate Optimized Article
-                                    # Generate optimized article with change tracking using term data
+                                    # Generate optimized article with Claude
                                     optimized_content, change_summary, success = generate_optimized_article_with_tracking(
                                         existing_content,
                                         st.session_state.results['scraped_contents'],
@@ -4005,7 +4008,7 @@ def main():
                                         st.session_state.results['keyword'],
                                         st.session_state.results.get('paa_questions', []),
                                         term_data,
-                                        openai_api_key
+                                        anthropic_api_key
                                     )
                                     
                                     if success and optimized_content:
@@ -4181,7 +4184,7 @@ def main():
                         key="download_previous_updates"
                     )
     
-    # Tab 7: Content Scoring (New Tab)
+    # Tab 7: Content Scoring
     with tabs[6]:
         st.header("Content Scoring & Optimization")
         
@@ -4191,15 +4194,15 @@ def main():
             # Check if we've already extracted terms
             if 'term_data' not in st.session_state.results:
                 if st.button("Extract Important Terms"):
-                    if not openai_api_key:
-                        st.error("Please enter OpenAI API key")
+                    if not anthropic_api_key:
+                        st.error("Please enter Anthropic API key")
                     else:
                         with st.spinner("Extracting important terms and topics from top-ranking content..."):
                             start_time = time.time()
                             
                             term_data, success = extract_important_terms(
                                 st.session_state.results['scraped_contents'], 
-                                openai_api_key
+                                anthropic_api_key
                             )
                             
                             if success and term_data:
@@ -4320,10 +4323,9 @@ def main():
                                 
                                 if suggestions_success:
                                     st.session_state.results['content_suggestions'] = suggestions
-                                
-                                st.success(f"Content scoring completed in {format_time(time.time() - start_time)}")
-                            else:
-                                st.error("Failed to score content")
+                                    st.success(f"Content scoring completed in {format_time(time.time() - start_time)}")
+                                else:
+                                    st.error("Failed to score content")
                 
                 # Display content score if available
                 if 'content_score' in st.session_state.results:
