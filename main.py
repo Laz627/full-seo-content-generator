@@ -2584,7 +2584,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
             max_tokens=2500,
-            system="You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues.",
+            system="You are an expert SEO content analyst. ALWAYS return valid, properly formatted JSON with no errors.",
             messages=[
                 {"role": "user", "content": f"""
                 Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
@@ -2616,7 +2616,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                 6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
                 7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
                 
-                Format your response as JSON:
+                Format your response as a VALID JSON object like this (BE VERY CAREFUL with commas, brackets, and syntax):
                 {{
                     "missing_headings": [
                         {{ 
@@ -2657,19 +2657,62 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                         }}
                     ]
                 }}
+                
+                CRITICAL: Ensure your JSON is properly formatted with NO SYNTAX ERRORS. Double-check all quotes, commas, and brackets.
                 """}
             ],
-            temperature=0.4
+            temperature=0.1  # Lower temperature for more precise output
         )
         
         # Extract and parse JSON response
         content = response.content[0].text
+        
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
         
-        content_gaps = json.loads(content)
+        # Try to fix common JSON errors
+        try:
+            content_gaps = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON decode error: {e}")
+            logger.warning("Attempting to fix JSON...")
+            
+            # Fix common JSON errors
+            # 1. Fix missing commas between objects in arrays
+            fixed_content = re.sub(r'}\s*{', '},{', content)
+            
+            # 2. Fix trailing commas in arrays
+            fixed_content = re.sub(r',\s*]', ']', fixed_content)
+            
+            # 3. Fix trailing commas in objects
+            fixed_content = re.sub(r',\s*}', '}', fixed_content)
+            
+            # 4. Add commas between array items where they might be missing
+            fixed_content = re.sub(r'"\s*{', '",{', fixed_content)
+            
+            # 5. Fix extra commas in empty arrays
+            fixed_content = re.sub(r'\[\s*,', '[', fixed_content)
+            fixed_content = re.sub(r',\s*\]', ']', fixed_content)
+            
+            try:
+                content_gaps = json.loads(fixed_content)
+            except json.JSONDecodeError as e2:
+                logger.error(f"Failed to fix JSON: {e2}")
+                logger.error(f"Original content: {content[:500]}...")
+                
+                # Create a basic structure for content gaps
+                content_gaps = {
+                    "missing_headings": [],
+                    "revised_headings": [],
+                    "content_gaps": [{"topic": "JSON parsing error", "details": "The analysis could not be properly formatted. Please try again.", "suggested_content": ""}],
+                    "expansion_areas": [],
+                    "semantic_relevancy_issues": [],
+                    "term_usage_issues": [],
+                    "unanswered_questions": []
+                }
+        
         return content_gaps, True
     
     except Exception as e:
@@ -3416,156 +3459,247 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
             doc.add_paragraph()
         
         # Add content heading
-        content_heading = doc.add_heading("Optimized Content", 1)
+        doc.add_heading("Optimized Content", 1)
         
-        # COMPLETELY REVISED: Detailed HTML parsing and systematic document building
+        # IMPROVED: Line-by-line processing with better markdown heading detection
         if html_content and isinstance(html_content, str):
-            try:
-                # Parse HTML with BeautifulSoup
-                soup = BeautifulSoup(html_content, 'html.parser')
-                
-                # Process the document elements sequentially
-                elements = []
-                
-                # First, find all headings with their positions
-                for i in range(1, 7):
-                    for heading in soup.find_all(f'h{i}'):
-                        text = heading.get_text().strip()
-                        if text:
-                            elements.append({
-                                'type': 'heading',
-                                'level': i,
-                                'text': text,
-                                'position': html_content.find(str(heading))
-                            })
-                
-                # Find all paragraphs with their positions
-                for p in soup.find_all('p'):
-                    text = p.get_text().strip()
-                    if text:
-                        elements.append({
-                            'type': 'paragraph',
-                            'text': text,
-                            'position': html_content.find(str(p))
-                        })
-                
-                # Find all unordered lists with their positions
-                for ul in soup.find_all('ul'):
-                    # Skip nested lists
-                    if ul.find_parent(['ul', 'ol']) is None:
-                        items = []
-                        for li in ul.find_all('li', recursive=False):
-                            items.append(li.get_text().strip())
-                        
-                        if items:
-                            elements.append({
-                                'type': 'unordered_list',
-                                'items': items,
-                                'position': html_content.find(str(ul))
-                            })
-                
-                # Find all ordered lists with their positions
-                for ol in soup.find_all('ol'):
-                    # Skip nested lists
-                    if ol.find_parent(['ul', 'ol']) is None:
-                        items = []
-                        for li in ol.find_all('li', recursive=False):
-                            items.append(li.get_text().strip())
-                        
-                        if items:
-                            elements.append({
-                                'type': 'ordered_list',
-                                'items': items,
-                                'position': html_content.find(str(ol))
-                            })
-                
-                # Sort elements by their position in the document
-                elements = sorted([e for e in elements if e['position'] >= 0], key=lambda x: x['position'])
-                
-                # Log the number of elements found
-                logger.info(f"Found {len(elements)} elements in the document")
-                
-                # Now add them to the document in order
-                for element in elements:
-                    if element['type'] == 'heading':
-                        heading = doc.add_heading(element['text'], level=element['level'])
-                        # Style the heading based on level
-                        if element['level'] == 1:
-                            heading.runs[0].font.size = Pt(16)
-                            heading.runs[0].bold = True
-                        elif element['level'] == 2:
-                            heading.runs[0].font.size = Pt(14)
-                            heading.runs[0].bold = True
-                        elif element['level'] == 3:
-                            heading.runs[0].font.size = Pt(12)
-                            heading.runs[0].bold = True
-                            heading.runs[0].italic = True
-                        else:
-                            heading.runs[0].font.size = Pt(11)
-                            heading.runs[0].bold = True
-                            heading.runs[0].italic = True
-                        
-                        logger.info(f"Added heading level {element['level']}: {element['text'][:30]}...")
-                        
-                    elif element['type'] == 'paragraph':
-                        doc.add_paragraph(element['text'])
-                        
-                    elif element['type'] == 'unordered_list':
-                        for item in element['items']:
-                            doc.add_paragraph(item, style='List Bullet')
-                        
-                    elif element['type'] == 'ordered_list':
-                        for item in element['items']:
-                            doc.add_paragraph(item, style='List Number')
-                
-                # If we didn't find any content, extract text more aggressively
-                if len(elements) == 0:
-                    logger.warning("No structured content found, extracting text more aggressively")
-                    
-                    # Clean up HTML to improve text extraction
-                    cleaned_html = re.sub(r'<br\s*/?>', '\n', html_content)
-                    cleaned_html = re.sub(r'<p[^>]*>', '\n\n', cleaned_html)
-                    cleaned_html = re.sub(r'</p>', '\n', cleaned_html)
-                    cleaned_html = re.sub(r'<li[^>]*>', '\n• ', cleaned_html)
-                    cleaned_html = re.sub(r'</li>', '\n', cleaned_html)
-                    
-                    # Extract text, removing remaining HTML tags
-                    text_content = re.sub(r'<[^>]+>', '', cleaned_html)
-                    text_content = re.sub(r'\n{3,}', '\n\n', text_content)  # Normalize newlines
-                    
-                    # Add extracted text as paragraphs
-                    for paragraph in text_content.split('\n\n'):
-                        paragraph = paragraph.strip()
-                        if paragraph:
-                            lines = paragraph.split('\n')
-                            for line in lines:
-                                line = line.strip()
-                                if line:
-                                    if line.startswith('• '):
-                                        doc.add_paragraph(line[2:], style='List Bullet')
-                                    else:
-                                        doc.add_paragraph(line)
+            # Split the content by lines
+            lines = html_content.split('\n')
             
-            except Exception as e:
-                logger.error(f"Error parsing HTML content: {e}")
-                logger.error(traceback.format_exc())
+            # Initialize list tracking
+            in_ul = False
+            in_ol = False
+            
+            # Helper function to process paragraph or list item text with styling
+            def add_styled_text(doc_element, text):
+                """Add text with inline styling to a paragraph or list item"""
+                # Process different types of formatting tags
+                bold_segments = re.finditer(r'<(strong|b)>(.*?)</\1>', text, re.IGNORECASE)
+                italic_segments = re.finditer(r'<(em|i)>(.*?)</\1>', text, re.IGNORECASE)
                 
-                # Fallback: try to extract pure text
-                try:
-                    # Remove all HTML tags and add text by paragraphs
-                    text_content = re.sub(r'<[^>]+>', ' ', html_content)
-                    text_content = re.sub(r'\s+', ' ', text_content).strip()
+                # First, replace styled segments with markers
+                placeholders = {}
+                placeholder_id = 0
+                
+                # Process bold segments
+                for match in bold_segments:
+                    placeholder = f"__BOLD_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'bold', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Process italic segments
+                for match in italic_segments:
+                    placeholder = f"__ITALIC_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'italic', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Remove any remaining HTML tags
+                clean_text = re.sub(r'<[^>]+>', '', text)
+                
+                # Split by placeholders to find plain text segments
+                segments = []
+                last_end = 0
+                for match in re.finditer(r'__(BOLD|ITALIC)_\d+__', clean_text):
+                    # Add plain text before the placeholder
+                    if match.start() > last_end:
+                        segments.append({
+                            'type': 'plain',
+                            'text': clean_text[last_end:match.start()]
+                        })
                     
-                    # Break into paragraphs
-                    paragraphs = re.split(r'\.\s+', text_content)
-                    for para in paragraphs:
-                        para = para.strip()
-                        if para and len(para) > 20:  # Only add substantial paragraphs
-                            doc.add_paragraph(para + '.')
+                    # Add the placeholder
+                    segments.append(placeholders[match.group(0)])
+                    last_end = match.end()
                 
-                except Exception as sub_e:
-                    logger.error(f"Fallback text extraction also failed: {sub_e}")
-                    doc.add_paragraph("Error extracting content from the article.")
+                # Add remaining plain text
+                if last_end < len(clean_text):
+                    segments.append({
+                        'type': 'plain',
+                        'text': clean_text[last_end:]
+                    })
+                
+                # Add each segment to the document element
+                for segment in segments:
+                    if not segment['text'].strip():
+                        continue
+                        
+                    if segment['type'] == 'plain':
+                        doc_element.add_run(segment['text'])
+                    elif segment['type'] == 'bold':
+                        run = doc_element.add_run(segment['text'])
+                        run.bold = True
+                    elif segment['type'] == 'italic':
+                        run = doc_element.add_run(segment['text'])
+                        run.italic = True
+            
+            # Process each line
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # First check for markdown headings
+                markdown_heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+                if markdown_heading_match:
+                    # Count number of # symbols to determine heading level
+                    level = len(markdown_heading_match.group(1))
+                    heading_text = markdown_heading_match.group(2).strip()
+                    
+                    # Remove any HTML tags from the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=level)
+                        # Style the heading based on level
+                        if level == 1:
+                            heading.runs[0].font.size = Pt(16)
+                        elif level == 2:
+                            heading.runs[0].font.size = Pt(14)
+                        elif level == 3:
+                            heading.runs[0].font.size = Pt(12)
+                            heading.runs[0].italic = True
+                        elif level >= 4:
+                            heading.runs[0].font.size = Pt(10)
+                            heading.runs[0].italic = True
+                        
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                    continue
+                
+                # Check if this line is an HTML heading tag
+                h1_match = re.match(r'^<h1[^>]*>(.*?)</h1>$', line, re.IGNORECASE)
+                h2_match = re.match(r'^<h2[^>]*>(.*?)</h2>$', line, re.IGNORECASE)
+                h3_match = re.match(r'^<h3[^>]*>(.*?)</h3>$', line, re.IGNORECASE)
+                h4_match = re.match(r'^<h4[^>]*>(.*?)</h4>$', line, re.IGNORECASE)
+                h5_match = re.match(r'^<h5[^>]*>(.*?)</h5>$', line, re.IGNORECASE)
+                h6_match = re.match(r'^<h6[^>]*>(.*?)</h6>$', line, re.IGNORECASE)
+                
+                # Process heading matches
+                if h1_match:
+                    heading_text = h1_match.group(1)
+                    # Remove any HTML tags inside the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=1)
+                        heading.runs[0].font.size = Pt(16)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h2_match:
+                    heading_text = h2_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=2)
+                        heading.runs[0].font.size = Pt(14)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h3_match:
+                    heading_text = h3_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=3)
+                        heading.runs[0].font.size = Pt(12)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h4_match:
+                    heading_text = h4_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=4)
+                        heading.runs[0].font.size = Pt(11)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h5_match:
+                    heading_text = h5_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=5)
+                        heading.runs[0].font.size = Pt(10)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h6_match:
+                    heading_text = h6_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=6)
+                        heading.runs[0].font.size = Pt(10)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                
+                # Check for list starts and ends
+                elif re.match(r'^<ul[^>]*>', line, re.IGNORECASE):
+                    in_ul = True
+                    in_ol = False
+                elif re.match(r'^</ul>', line, re.IGNORECASE):
+                    in_ul = False
+                elif re.match(r'^<ol[^>]*>', line, re.IGNORECASE):
+                    in_ol = True
+                    in_ul = False
+                elif re.match(r'^</ol>', line, re.IGNORECASE):
+                    in_ol = False
+                
+                # Check if this line is a list item
+                elif re.match(r'^<li[^>]*>', line, re.IGNORECASE) and '</li>' in line.lower():
+                    # Extract list item content
+                    li_match = re.match(r'^<li[^>]*>(.*?)</li>$', line, re.IGNORECASE)
+                    if li_match:
+                        li_text = li_match.group(1)
+                        if li_text.strip():
+                            if in_ol:
+                                list_para = doc.add_paragraph(style='List Number')
+                                add_styled_text(list_para, li_text)
+                            else:  # Default to bullet if we're not sure
+                                list_para = doc.add_paragraph(style='List Bullet')
+                                add_styled_text(list_para, li_text)
+                
+                # Check if this line is a paragraph tag
+                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
+                    # Extract paragraph content
+                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
+                    if para_match:
+                        para_text = para_match.group(1)
+                        if para_text.strip():
+                            para = doc.add_paragraph()
+                            add_styled_text(para, para_text)
+                
+                # Check for markdown bullet points
+                elif line.startswith('* ') or line.startswith('- '):
+                    bullet_text = line[2:].strip()
+                    if bullet_text:
+                        bullet_para = doc.add_paragraph(style='List Bullet')
+                        add_styled_text(bullet_para, bullet_text)
+                
+                # Check for markdown numbered list
+                elif re.match(r'^\d+\.\s', line):
+                    num_text = re.sub(r'^\d+\.\s', '', line).strip()
+                    if num_text:
+                        num_para = doc.add_paragraph(style='List Number')
+                        add_styled_text(num_para, num_text)
+                
+                # If it's plain text (not starting with a tag), add as paragraph
+                elif not line.startswith('<'):
+                    para = doc.add_paragraph()
+                    para.add_run(line)
+                
+                # Otherwise, try to extract clean text from HTML
+                else:
+                    # Clean HTML tags and add as paragraph if content exists
+                    clean_text = re.sub(r'<[^>]+>', '', line).strip()
+                    if clean_text:
+                        para = doc.add_paragraph()
+                        para.add_run(clean_text)
         
         # Save document to memory stream
         doc_stream = BytesIO()
