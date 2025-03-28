@@ -4530,7 +4530,7 @@ def main():
                                 st.markdown("#### Missing Primary Terms")
                                 for term in missing_primary:
                                     st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;">
+                                    <div>
                                         <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f} - Recommended usage: {term.get('recommended_usage', 1)}
                                     </div>
                                     """, unsafe_allow_html=True)
