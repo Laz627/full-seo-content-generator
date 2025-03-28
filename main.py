@@ -4531,11 +4531,10 @@ def main():
                                 for term in missing_primary:
                                     # Pre-format the importance value
                                     importance_formatted = f"{term.get('importance', 0):.2f}"
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;">
-                                        <strong>{term.get('term')}</strong> - Importance: {importance_formatted} - Recommended usage: {term.get('recommended_usage', 1)}
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;'>"
+                                    html += f"<strong>{term.get('term')}</strong> - Importance: {importance_formatted} - Recommended usage: {term.get('recommended_usage', 1)}"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             else:
                                 st.success("No important primary terms are missing!")
                             
@@ -4544,11 +4543,10 @@ def main():
                             if underused_terms:
                                 st.markdown("#### Underused Terms")
                                 for term in underused_terms:
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
-                                        <strong>{term.get('term')}</strong> - Current usage: {term.get('current_usage')}/{term.get('recommended_usage')} recommended
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 5px; padding: 5px 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;'>"
+                                    html += f"<strong>{term.get('term')}</strong> - Current usage: {term.get('current_usage')}/{term.get('recommended_usage')} recommended"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             
                             # Missing secondary terms
                             missing_secondary = [s for s in suggestions.get('missing_terms', []) if s.get('type') == 'secondary']
@@ -4557,11 +4555,10 @@ def main():
                                 for term in missing_secondary:
                                     # Pre-format the importance value
                                     importance_formatted = f"{term.get('importance', 0):.2f}"
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f0f0f0; border-left: 3px solid #808080; border-radius: 3px;">
-                                        <strong>{term.get('term')}</strong> - Importance: {importance_formatted}
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 5px; padding: 5px 10px; background-color: #f0f0f0; border-left: 3px solid #808080; border-radius: 3px;'>"
+                                    html += f"<strong>{term.get('term')}</strong> - Importance: {importance_formatted}"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                         
                         # Content Gaps tab
                         with suggestion_tabs[1]:
@@ -4572,12 +4569,11 @@ def main():
                             if missing_topics:
                                 st.markdown("#### Topics to Add")
                                 for topic in missing_topics:
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 3px;">
-                                        <strong>Missing Topic: {topic.get('topic')}</strong>
-                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 10px; padding: 10px; background-color: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 3px;'>"
+                                    html += f"<strong>Missing Topic: {topic.get('topic')}</strong>"
+                                    html += f"<p style='margin: 5px 0 0 0;'>{topic.get('description', '')}</p>"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             
                             # Partially covered topics (need enhancement)
                             partial_topics = suggestions.get('partial_topics', [])
@@ -4585,13 +4581,12 @@ def main():
                                 st.markdown("#### Topics to Expand")
                                 for topic in partial_topics:
                                     match_ratio = topic.get('match_ratio', 0)
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
-                                        <strong>Enhance Coverage: {topic.get('topic')}</strong> ({int(match_ratio * 100)}% covered)
-                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
-                                        <p style="margin: 5px 0 0 0; font-style: italic;">{topic.get('suggestion', '')}</p>
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 10px; padding: 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;'>"
+                                    html += f"<strong>Enhance Coverage: {topic.get('topic')}</strong> ({int(match_ratio * 100)}% covered)"
+                                    html += f"<p style='margin: 5px 0 0 0;'>{topic.get('description', '')}</p>"
+                                    html += f"<p style='margin: 5px 0 0 0; font-style: italic;'>{topic.get('suggestion', '')}</p>"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             
                             if not missing_topics and not partial_topics:
                                 st.success("Your content covers all the important topics comprehensively!")
@@ -4604,11 +4599,10 @@ def main():
                             unanswered = suggestions.get('unanswered_questions', [])
                             if unanswered:
                                 for i, question in enumerate(unanswered, 1):
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e8f5e9; border-left: 3px solid #4caf50; border-radius: 3px;">
-                                        <strong>{i}. {question}</strong>
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 10px; padding: 10px; background-color: #e8f5e9; border-left: 3px solid #4caf50; border-radius: 3px;'>"
+                                    html += f"<strong>{i}. {question}</strong>"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             else:
                                 st.success("Your content answers all the important questions!")
                         
@@ -4620,21 +4614,19 @@ def main():
                             readability = suggestions.get('readability_suggestions', [])
                             if readability:
                                 for suggestion in readability:
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f3e5f5; border-left: 3px solid #9c27b0; border-radius: 3px;">
-                                        {suggestion}
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 5px; padding: 5px 10px; background-color: #f3e5f5; border-left: 3px solid #9c27b0; border-radius: 3px;'>"
+                                    html += f"{suggestion}"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             
                             # Structure suggestions
                             structure = suggestions.get('structure_suggestions', [])
                             if structure:
                                 for suggestion in structure:
-                                    st.markdown(f"""
-                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fce4ec; border-left: 3px solid #e91e63; border-radius: 3px;">
-                                        {suggestion}
-                                    </div>
-                                    """, unsafe_allow_html=True)
+                                    html = f"<div style='margin-bottom: 5px; padding: 5px 10px; background-color: #fce4ec; border-left: 3px solid #e91e63; border-radius: 3px;'>"
+                                    html += f"{suggestion}"
+                                    html += "</div>"
+                                    st.markdown(html, unsafe_allow_html=True)
                             
                             if not readability and not structure:
                                 st.success("Your content has good readability and structure!")
