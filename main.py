@@ -1541,7 +1541,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                             Write content for the section "{h2_title}" of an article about "{keyword}".
                             
                             Content requirements:
-                            1. Write 3-4 substantive paragraphs (250-350 words total)
+                            1. Write 2-3 substantive paragraphs (200-250 words total)
                             2. Be informative and provide valuable insights
                             3. Include the main keyword "{keyword}" naturally
                             4. DO NOT use rhetorical questions
@@ -1573,7 +1573,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                                     Write content for the subsection "{h3_title}" under the section "{h2_title}" for an article about "{keyword}".
                                     
                                     Content requirements:
-                                    1. Write 2-3 paragraphs (200-250 words total)
+                                    1. Write 1-2 paragraphs (100-150 words total)
                                     2. Be specific, detailed and actionable
                                     3. DO NOT use rhetorical questions
                                     4. Start with direct, informative statements
