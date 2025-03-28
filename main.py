@@ -2142,10 +2142,78 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # COMPLETELY DIFFERENT APPROACH: Line-by-line processing
+        # IMPROVED: Line-by-line processing with style preservation
         if article_content and isinstance(article_content, str):
             # Split the content by lines
             lines = article_content.split('\n')
+            
+            # Initialize list tracking
+            in_ul = False
+            in_ol = False
+            
+            # Helper function to process paragraph or list item text with styling
+            def add_styled_text(doc_element, text):
+                """Add text with inline styling to a paragraph or list item"""
+                # Process different types of formatting tags
+                bold_segments = re.finditer(r'<(strong|b)>(.*?)</\1>', text, re.IGNORECASE)
+                italic_segments = re.finditer(r'<(em|i)>(.*?)</\1>', text, re.IGNORECASE)
+                
+                # First, replace styled segments with markers
+                placeholders = {}
+                placeholder_id = 0
+                
+                # Process bold segments
+                for match in bold_segments:
+                    placeholder = f"__BOLD_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'bold', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Process italic segments
+                for match in italic_segments:
+                    placeholder = f"__ITALIC_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'italic', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Remove any remaining HTML tags
+                clean_text = re.sub(r'<[^>]+>', '', text)
+                
+                # Split by placeholders to find plain text segments
+                segments = []
+                last_end = 0
+                for match in re.finditer(r'__(BOLD|ITALIC)_\d+__', clean_text):
+                    # Add plain text before the placeholder
+                    if match.start() > last_end:
+                        segments.append({
+                            'type': 'plain',
+                            'text': clean_text[last_end:match.start()]
+                        })
+                    
+                    # Add the placeholder
+                    segments.append(placeholders[match.group(0)])
+                    last_end = match.end()
+                
+                # Add remaining plain text
+                if last_end < len(clean_text):
+                    segments.append({
+                        'type': 'plain',
+                        'text': clean_text[last_end:]
+                    })
+                
+                # Add each segment to the document element
+                for segment in segments:
+                    if not segment['text'].strip():
+                        continue
+                        
+                    if segment['type'] == 'plain':
+                        doc_element.add_run(segment['text'])
+                    elif segment['type'] == 'bold':
+                        run = doc_element.add_run(segment['text'])
+                        run.bold = True
+                    elif segment['type'] == 'italic':
+                        run = doc_element.add_run(segment['text'])
+                        run.italic = True
             
             # Process each line
             for line in lines:
@@ -2166,38 +2234,63 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h1_match.group(1)
                     # Remove any HTML tags inside the heading
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=1)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=1)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 elif h2_match:
                     heading_text = h2_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=2)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=2)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 elif h3_match:
                     heading_text = h3_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=3)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=3)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 elif h4_match:
                     heading_text = h4_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=4)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=4)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 elif h5_match:
                     heading_text = h5_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=5)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=5)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 elif h6_match:
                     heading_text = h6_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    doc.add_heading(heading_text, level=6)
+                    if heading_text:
+                        doc.add_heading(heading_text, level=6)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
                 
-                # Check if this line is a paragraph tag
-                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
-                    # Extract paragraph content
-                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
-                    if para_match:
-                        para_text = para_match.group(1)
-                        # Remove any HTML tags inside the paragraph
-                        para_text = re.sub(r'<[^>]+>', '', para_text).strip()
-                        if para_text:
-                            doc.add_paragraph(para_text)
+                # Check for list starts and ends
+                elif re.match(r'^<ul[^>]*>', line, re.IGNORECASE):
+                    in_ul = True
+                    in_ol = False
+                elif re.match(r'^</ul>', line, re.IGNORECASE):
+                    in_ul = False
+                elif re.match(r'^<ol[^>]*>', line, re.IGNORECASE):
+                    in_ol = True
+                    in_ul = False
+                elif re.match(r'^</ol>', line, re.IGNORECASE):
+                    in_ol = False
                 
                 # Check if this line is a list item
                 elif re.match(r'^<li[^>]*>', line, re.IGNORECASE) and '</li>' in line.lower():
@@ -2205,26 +2298,36 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     li_match = re.match(r'^<li[^>]*>(.*?)</li>$', line, re.IGNORECASE)
                     if li_match:
                         li_text = li_match.group(1)
-                        # Remove any HTML tags inside the list item
-                        li_text = re.sub(r'<[^>]+>', '', li_text).strip()
-                        if li_text:
-                            doc.add_paragraph(li_text, style='List Bullet')
+                        if li_text.strip():
+                            if in_ol:
+                                list_para = doc.add_paragraph(style='List Number')
+                                add_styled_text(list_para, li_text)
+                            else:  # Default to bullet if we're not sure
+                                list_para = doc.add_paragraph(style='List Bullet')
+                                add_styled_text(list_para, li_text)
                 
-                # Check if this is just an HTML tag without matching closing tag
-                elif re.match(r'^<[^>]+>$', line):
-                    # Skip standalone HTML tags
-                    continue
+                # Check if this line is a paragraph tag
+                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
+                    # Extract paragraph content
+                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
+                    if para_match:
+                        para_text = para_match.group(1)
+                        if para_text.strip():
+                            para = doc.add_paragraph()
+                            add_styled_text(para, para_text)
                 
-                # If it's not a recognized HTML element, treat as plain text
-                elif not re.match(r'^<', line):
-                    doc.add_paragraph(line)
+                # If it's plain text (not starting with a tag), add as paragraph
+                elif not line.startswith('<'):
+                    para = doc.add_paragraph()
+                    para.add_run(line)
                 
-                # Otherwise, it might be a complex HTML block or something else
+                # Otherwise, try to extract clean text from HTML
                 else:
-                    # Try to extract text from inside HTML tags
+                    # Clean HTML tags and add as paragraph if content exists
                     clean_text = re.sub(r'<[^>]+>', '', line).strip()
                     if clean_text:
-                        doc.add_paragraph(clean_text)
+                        para = doc.add_paragraph()
+                        para.add_run(clean_text)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
