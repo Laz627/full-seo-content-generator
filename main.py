@@ -1717,21 +1717,57 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         # Log for debugging
         logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
         
-        # 1. Extract paragraphs from the article
+        # 1. Extract paragraphs from the article - IMPROVED
         soup = BeautifulSoup(article_content, 'html.parser')
         paragraphs = []
-        for p_tag in soup.find_all('p'):
-            para_text = p_tag.get_text()
-            if len(para_text.split()) > 15:  # Only consider paragraphs with enough content
-                paragraphs.append({
-                    'text': para_text,
-                    'html': str(p_tag),
-                    'element': p_tag
-                })
+        
+        # Find all paragraph tags
+        p_tags = soup.find_all('p')
+        
+        # If no p tags found, try to split content by double newlines
+        if not p_tags and not '<p>' in article_content:
+            # This might be plain text content
+            text_chunks = article_content.split('\n\n')
+            for i, chunk in enumerate(text_chunks):
+                if len(chunk.split()) > 15:  # Only consider chunks with enough content
+                    paragraphs.append({
+                        'text': chunk,
+                        'html': f"<p>{chunk}</p>",
+                        'element': f"chunk_{i}"  # Just a placeholder
+                    })
+            
+            if not paragraphs:
+                # Try splitting by single newlines
+                text_chunks = article_content.split('\n')
+                for i, chunk in enumerate(text_chunks):
+                    if len(chunk.split()) > 15:
+                        paragraphs.append({
+                            'text': chunk,
+                            'html': f"<p>{chunk}</p>",
+                            'element': f"chunk_{i}"
+                        })
+        else:
+            # Process the p tags
+            for p_tag in p_tags:
+                para_text = p_tag.get_text()
+                if len(para_text.split()) > 15:  # Only consider paragraphs with enough content
+                    paragraphs.append({
+                        'text': para_text,
+                        'html': str(p_tag),
+                        'element': p_tag
+                    })
         
         if not paragraphs:
             logger.warning("No paragraphs found in the article")
-            return article_content, [], False
+            # Final fallback - treat the entire content as one paragraph if it has no HTML
+            if '<' not in article_content and '>' not in article_content:
+                paragraphs.append({
+                    'text': article_content,
+                    'html': f"<p>{article_content}</p>",
+                    'element': "full_content"
+                })
+            else:
+                return article_content, [], False
         
         # 2. Generate embeddings for each paragraph
         logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs")
@@ -1851,36 +1887,69 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             logger.warning("No suitable links found to add")
             return article_content, [], False
         
-        # Create a deep copy of the soup to modify
-        modified_soup = BeautifulSoup(article_content, 'html.parser')
-        modified_paragraphs = modified_soup.find_all('p')
+        # Update based on how paragraphs were extracted
+        modified_content = article_content
         
-        # Apply links
-        for link in links_to_add:
-            para_idx = link['paragraph_index']
-            if para_idx < len(modified_paragraphs):
-                p_tag = modified_paragraphs[para_idx]
-                p_html = str(p_tag)
+        # If we're working with HTML content with p tags
+        if '<p>' in article_content:
+            # Create a deep copy of the soup to modify
+            modified_soup = BeautifulSoup(article_content, 'html.parser')
+            modified_paragraphs = modified_soup.find_all('p')
+            
+            # Apply links
+            for link in links_to_add:
+                para_idx = link['paragraph_index']
+                if para_idx < len(modified_paragraphs):
+                    p_tag = modified_paragraphs[para_idx]
+                    p_html = str(p_tag)
+                    anchor_text = link['anchor_text']
+                    url = link['url']
+                    
+                    # Replace the text with a linked version
+                    new_html = p_tag.decode_contents().replace(
+                        anchor_text, 
+                        f'<a href="{url}">{anchor_text}</a>', 
+                        1
+                    )
+                    p_tag.clear()
+                    p_tag.append(BeautifulSoup(new_html, 'html.parser'))
+                    
+                    # Add context to the link info
+                    para_text = paragraphs[para_idx]['text']
+                    start_pos = max(0, para_text.find(anchor_text) - 30)
+                    end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
+                    context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
+                    
+                    # Update the link details
+                    link['context'] = context
+            
+            modified_content = str(modified_soup)
+        else:
+            # For non-HTML or plain text content
+            for link in links_to_add:
+                para_idx = link['paragraph_index']
                 anchor_text = link['anchor_text']
                 url = link['url']
                 
-                # Replace the text with a linked version
-                new_html = p_tag.decode_contents().replace(
-                    anchor_text, 
-                    f'<a href="{url}">{anchor_text}</a>', 
-                    1
-                )
-                p_tag.clear()
-                p_tag.append(BeautifulSoup(new_html, 'html.parser'))
-                
-                # Add context to the link info
+                # For plain text, we need to find the exact occurrence
+                # Create a temporary HTML structure around the plain text for easy replacement
                 para_text = paragraphs[para_idx]['text']
-                start_pos = max(0, para_text.find(anchor_text) - 30)
-                end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
-                context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
                 
-                # Update the link details
-                link['context'] = context
+                if isinstance(paragraphs[para_idx]['element'], str) and paragraphs[para_idx]['element'].startswith('chunk_'):
+                    # For text chunks, we need to find and replace in the full content
+                    modified_content = modified_content.replace(
+                        para_text,
+                        para_text.replace(anchor_text, f'<a href="{url}">{anchor_text}</a>', 1),
+                        1
+                    )
+                    
+                    # Add context to the link info
+                    start_pos = max(0, para_text.find(anchor_text) - 30)
+                    end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
+                    context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
+                    
+                    # Update the link details
+                    link['context'] = context
         
         # Format for return
         links_output = []
@@ -1888,12 +1957,12 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             links_output.append({
                 "url": link['url'],
                 "anchor_text": link['anchor_text'],
-                "context": link['context'],
+                "context": link.get('context', ''),
                 "page_title": link['page_title'],
                 "similarity_score": round(link['similarity_score'], 2)
             })
         
-        return str(modified_soup), links_output, True
+        return modified_content, links_output, True
         
     except Exception as e:
         error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
