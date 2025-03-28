@@ -2142,105 +2142,49 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # COMPLETELY REVISED: Use BeautifulSoup for proper HTML parsing
+        # SIMPLIFIED: Convert HTML to text and parse by line
         if article_content and isinstance(article_content, str):
-            # Parse HTML with BeautifulSoup
-            soup = BeautifulSoup(article_content, 'html.parser')
+            # Step 1: Extract headings with regex
+            heading_matches = []
+            for level in range(1, 7):
+                for match in re.finditer(f'<h{level}[^>]*>(.*?)</h{level}>', article_content, re.DOTALL | re.IGNORECASE):
+                    # Clean the heading text
+                    heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
+                    if heading_text:
+                        heading_matches.append({
+                            'level': level,
+                            'text': heading_text,
+                            'position': match.start()
+                        })
             
-            # Find all elements we want to process
-            for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'strong', 'em']):
-                # Skip empty elements
-                if not element.get_text().strip():
-                    continue
-                
-                # Process headings - ensure no nested tags are included
-                if element.name.startswith('h') and len(element.name) == 2:
-                    try:
-                        level = int(element.name[1])
-                        text = element.get_text().strip()
-                        if text:
-                            doc.add_heading(text, level=level)
-                    except:
-                        # Fallback for parsing issues
-                        doc.add_paragraph(element.get_text().strip()).bold = True
-                
-                # Process paragraphs
-                elif element.name == 'p':
-                    # Skip if this is a list item's parent
-                    if element.find(['ul', 'ol']):
-                        continue
-                    
-                    # Add the paragraph
-                    text = element.get_text().strip()
-                    if text:
-                        p = doc.add_paragraph()
-                        
-                        # Check for strong/em within paragraph
-                        if element.find(['strong', 'em', 'b', 'i']):
-                            # Need to process formatting
-                            current_text = ""
-                            for content in element.contents:
-                                if isinstance(content, str):
-                                    # Plain text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    p.add_run(content)
-                                elif content.name in ['strong', 'b']:
-                                    # Bold text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    bold_run = p.add_run(content.get_text())
-                                    bold_run.bold = True
-                                elif content.name in ['em', 'i']:
-                                    # Italic text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    italic_run = p.add_run(content.get_text())
-                                    italic_run.italic = True
-                                else:
-                                    # Other element, get its text
-                                    current_text += content.get_text()
-                            
-                            # Add any remaining text
-                            if current_text:
-                                p.add_run(current_text)
-                        else:
-                            # Simple paragraph
-                            p.add_run(text)
-                
-                # Process unordered lists - only process top-level ul
-                elif element.name == 'ul' and not element.find_parent(['li', 'ul', 'ol']):
-                    for li in element.find_all('li', recursive=False):
-                        li_text = li.get_text().strip()
-                        if li_text:
-                            doc.add_paragraph(li_text, style='List Bullet')
-                
-                # Process ordered lists - only process top-level ol
-                elif element.name == 'ol' and not element.find_parent(['li', 'ul', 'ol']):
-                    for li in element.find_all('li', recursive=False):
-                        li_text = li.get_text().strip()
-                        if li_text:
-                            doc.add_paragraph(li_text, style='List Number')
-                
-                # Avoid processing list items directly - they'll be handled by their parent ul/ol
-                # This prevents duplicate list items
-                
-            # If no contents were added, try a simpler approach
-            if len(doc.paragraphs) <= 1 or doc.paragraphs[-1].text == 'Generated Article Content':
-                logger.warning("HTML parsing found no content, trying text extraction")
-                
-                # Extract all text, removing HTML tags
-                text_content = re.sub(r'<.*?>', '\n', article_content)
-                text_content = re.sub(r'\n+', '\n', text_content).strip()
-                
-                # Split by newlines and process
-                for line in text_content.split('\n'):
-                    line = line.strip()
-                    if line:
-                        doc.add_paragraph(line)
+            # Add all headings first, sorted by position
+            if heading_matches:
+                heading_matches.sort(key=lambda x: x['position'])
+                for heading in heading_matches:
+                    doc.add_heading(heading['text'], level=heading['level'])
+            
+            # Step 2: Extract paragraphs and list items
+            # Remove HTML tags but preserve structure with newlines
+            text_content = re.sub(r'<br\s*/?>|</?p>|</?div>', '\n', article_content)
+            text_content = re.sub(r'<li>', '\n• ', text_content)  # Convert list items to bullet points
+            text_content = re.sub(r'</?[^>]+>', ' ', text_content)  # Remove all other HTML tags
+            text_content = re.sub(r'\s+', ' ', text_content)  # Normalize whitespace
+            text_content = re.sub(r'\n\s+', '\n', text_content)  # Clean up newlines
+            
+            # Split by newlines and add as paragraphs
+            paragraphs = [p.strip() for p in text_content.split('\n') if p.strip()]
+            
+            # Filter out paragraphs that are already in the headings
+            heading_texts = set(h['text'] for h in heading_matches)
+            paragraphs = [p for p in paragraphs if p not in heading_texts]
+            
+            # Add the paragraphs to the document
+            for para in paragraphs:
+                if para.startswith('• '):
+                    # This is a list item
+                    doc.add_paragraph(para[2:], style='List Bullet')
+                else:
+                    doc.add_paragraph(para)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
@@ -3300,116 +3244,60 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add content heading
         doc.add_heading("Optimized Content", 1)
         
-        # COMPLETELY REVISED: Use BeautifulSoup for proper HTML parsing
+        # SIMPLIFIED: Extract and process headings first, then paragraphs
         if html_content and isinstance(html_content, str):
-            # Parse HTML with BeautifulSoup
-            soup = BeautifulSoup(html_content, 'html.parser')
+            # Step 1: Extract headings with regex
+            heading_matches = []
+            for level in range(1, 7):
+                for match in re.finditer(f'<h{level}[^>]*>(.*?)</h{level}>', html_content, re.DOTALL | re.IGNORECASE):
+                    # Clean the heading text
+                    heading_text = re.sub(r'<.*?>', '', match.group(1)).strip()
+                    if heading_text:
+                        heading_matches.append({
+                            'level': level,
+                            'text': heading_text,
+                            'position': match.start()
+                        })
             
-            # Find all elements we want to process
-            for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'strong', 'em']):
-                # Skip empty elements
-                if not element.get_text().strip():
-                    continue
-                
-                # Process headings - ensure no nested tags are included
-                if element.name.startswith('h') and len(element.name) == 2:
-                    try:
-                        level = int(element.name[1])
-                        text = element.get_text().strip()
-                        if text:
-                            heading = doc.add_heading(text, level=level)
-                            # Style the heading based on level
-                            if level == 1:
-                                heading.runs[0].font.size = Pt(16)
-                            elif level == 2:
-                                heading.runs[0].font.size = Pt(14)
-                            elif level == 3:
-                                heading.runs[0].font.size = Pt(12)
-                                heading.runs[0].italic = True
-                            elif level >= 4:
-                                heading.runs[0].font.size = Pt(11)
-                                heading.runs[0].italic = True
-                    except:
-                        # Fallback for parsing issues
-                        doc.add_paragraph(element.get_text().strip()).bold = True
-                
-                # Process paragraphs
-                elif element.name == 'p':
-                    # Skip if this is a list item's parent
-                    if element.find(['ul', 'ol']):
-                        continue
-                    
-                    # Add the paragraph
-                    text = element.get_text().strip()
-                    if text:
-                        p = doc.add_paragraph()
-                        
-                        # Check for strong/em within paragraph
-                        if element.find(['strong', 'em', 'b', 'i']):
-                            # Need to process formatting
-                            current_text = ""
-                            for content in element.contents:
-                                if isinstance(content, str):
-                                    # Plain text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    p.add_run(content)
-                                elif content.name in ['strong', 'b']:
-                                    # Bold text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    bold_run = p.add_run(content.get_text())
-                                    bold_run.bold = True
-                                elif content.name in ['em', 'i']:
-                                    # Italic text
-                                    if current_text:
-                                        p.add_run(current_text)
-                                        current_text = ""
-                                    italic_run = p.add_run(content.get_text())
-                                    italic_run.italic = True
-                                else:
-                                    # Other element, get its text
-                                    current_text += content.get_text()
-                            
-                            # Add any remaining text
-                            if current_text:
-                                p.add_run(current_text)
-                        else:
-                            # Simple paragraph
-                            p.add_run(text)
-                
-                # Process unordered lists - only process top-level ul
-                elif element.name == 'ul' and not element.find_parent(['li', 'ul', 'ol']):
-                    for li in element.find_all('li', recursive=False):
-                        li_text = li.get_text().strip()
-                        if li_text:
-                            doc.add_paragraph(li_text, style='List Bullet')
-                
-                # Process ordered lists - only process top-level ol
-                elif element.name == 'ol' and not element.find_parent(['li', 'ul', 'ol']):
-                    for li in element.find_all('li', recursive=False):
-                        li_text = li.get_text().strip()
-                        if li_text:
-                            doc.add_paragraph(li_text, style='List Number')
-                
-                # Avoid processing list items directly - they'll be handled by their parent ul/ol
-                # This prevents duplicate list items
+            # Add all headings first, sorted by position
+            if heading_matches:
+                heading_matches.sort(key=lambda x: x['position'])
+                for heading in heading_matches:
+                    heading_para = doc.add_heading(heading['text'], level=heading['level'])
+                    # Apply styling to headings
+                    if heading['level'] == 1:
+                        heading_para.runs[0].font.size = Pt(16)
+                    elif heading['level'] == 2:
+                        heading_para.runs[0].font.size = Pt(14)
+                    elif heading['level'] == 3:
+                        heading_para.runs[0].font.size = Pt(12)
+                        heading_para.runs[0].italic = True
+                    elif heading['level'] >= 4:
+                        heading_para.runs[0].font.size = Pt(11)
+                        heading_para.runs[0].italic = True
             
-            # If no contents were added, try a simpler approach
-            if len(doc.paragraphs) <= 1 or doc.paragraphs[-1].text == 'Optimized Content':
-                logger.warning("HTML parsing found no content, trying text extraction")
-                
-                # Extract all text, removing HTML tags
-                text_content = re.sub(r'<.*?>', '\n', html_content)
-                text_content = re.sub(r'\n+', '\n', text_content).strip()
-                
-                # Split by newlines and process
-                for line in text_content.split('\n'):
-                    line = line.strip()
-                    if line:
-                        doc.add_paragraph(line)
+            # Step 2: Extract paragraphs and list items
+            # Remove HTML tags but preserve structure with newlines
+            text_content = re.sub(r'<br\s*/?>|</?p>|</?div>', '\n', html_content)
+            text_content = re.sub(r'<li>', '\n• ', text_content)  # Convert list items to bullet points
+            text_content = re.sub(r'</?[^>]+>', ' ', text_content)  # Remove all other HTML tags
+            text_content = re.sub(r'\s+', ' ', text_content)  # Normalize whitespace
+            text_content = re.sub(r'\n\s+', '\n', text_content)  # Clean up newlines
+            
+            # Split by newlines and add as paragraphs
+            paragraphs = [p.strip() for p in text_content.split('\n') if p.strip()]
+            
+            # Filter out paragraphs that are already in the headings
+            heading_texts = set(h['text'] for h in heading_matches)
+            paragraphs = [p for p in paragraphs if p not in heading_texts]
+            
+            # Add the paragraphs to the document
+            for para in paragraphs:
+                if para.startswith('• '):
+                    # This is a list item
+                    doc.add_paragraph(para[2:], style='List Bullet')
+                else:
+                    doc.add_paragraph(para)
         
         # Save document to memory stream
         doc_stream = BytesIO()
