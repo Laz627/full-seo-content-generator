@@ -1529,14 +1529,14 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     
                     Core requirements:
                     1. Target LENGTH: Write exactly 1,800-2,000 words total (very important!)
-                    2. For each section, write 2-3 medium-length paragraphs (not overly long paragraphs)
+                    2. For each section, write 1-2 medium-length paragraphs (not overly long paragraphs)
                     3. NATURAL FLOW: Ensure smooth transitions between sections
                     4. LANGUAGE VARIETY: Use a variety of terms and phrasings to discuss the topic
                     5. KEYWORD USAGE: Use the term "{keyword}" throughout the article (5-7 times total)
                     
                     Content guidelines:
                     - Start with a concise introduction (100-150 words)
-                    - Include 4-5 main sections (H2) with 2-3 paragraphs each
+                    - Include 4-5 main sections (H2) with 1-2 paragraphs each
                     - Add 1-2 subsections (H3) where helpful, with 1-2 paragraphs each
                     - End with a brief conclusion (100-150 words)
                     - Use bullet points or numbered lists where appropriate
@@ -2080,20 +2080,33 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
         
         # Section 6: Generated Article or Guidance
-        if guidance_only:
-            doc.add_heading('Content Writing Guidance', level=1)
-        else:
-            doc.add_heading('Generated Article with Internal Links', level=1)
+        doc.add_heading('Generated Article Content', level=1)
         
-        # IMPROVED: Parse HTML content and add to document more effectively
-        # First check if article_content contains HTML tags
-        if article_content and ('<h1>' in article_content or '<p>' in article_content):
+        # FIXED: Improved heading detection and processing
+        if article_content and isinstance(article_content, str):
+            # Parse HTML content with Beautiful Soup
             soup = BeautifulSoup(article_content, 'html.parser')
             
-            for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
-                if element.name in ['h1', 'h2', 'h3']:
-                    level = int(element.name[1])
-                    doc.add_heading(element.get_text(), level=level)
+            # Find all the heading and content elements
+            elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol'])
+            
+            # Process each element
+            for element in elements:
+                # Process headings
+                if element.name.startswith('h') and len(element.name) == 2:
+                    try:
+                        # Extract the heading level and text
+                        level = int(element.name[1])
+                        heading_text = element.get_text().strip()
+                        
+                        # Add the heading to the document
+                        if heading_text:
+                            doc.add_heading(heading_text, level=level)
+                    except (ValueError, IndexError) as e:
+                        # Fallback if we can't parse the heading properly
+                        doc.add_paragraph(element.get_text()).bold = True
+                
+                # Process paragraphs
                 elif element.name == 'p':
                     p = doc.add_paragraph()
                     
@@ -2110,11 +2123,11 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                                 run = p.add_run(text)
                                 run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
                                 run.underline = True
-                                # Note: This creates the visual appearance but not functional hyperlinks
                         else:
                             # Other tags
                             p.add_run(content.get_text())
-                            
+                
+                # Process unordered lists
                 elif element.name == 'ul':
                     for li in element.find_all('li'):
                         p = doc.add_paragraph(style='List Bullet')
@@ -2130,9 +2143,10 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                                     run.underline = True
                             else:
                                 p.add_run(content.get_text())
-                                
+                
+                # Process ordered lists
                 elif element.name == 'ol':
-                    for i, li in enumerate(element.find_all('li')):
+                    for li in element.find_all('li'):
                         p = doc.add_paragraph(style='List Number')
                         for content in li.contents:
                             if isinstance(content, str):
@@ -2146,9 +2160,6 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                                     run.underline = True
                             else:
                                 p.add_run(content.get_text())
-        else:
-            # If no HTML tags found, add content as plain text with line breaks
-            doc.add_paragraph(article_content)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
