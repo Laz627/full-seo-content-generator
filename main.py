@@ -1404,30 +1404,39 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # Prepare important terms data
-        primary_terms_str = ""
+        # IMPROVED: Better format for primary and secondary terms with their recommended usage
+        primary_terms_with_usage = []
         if term_data and 'primary_terms' in term_data:
-            primary_terms = []
             for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 usage = term_info.get('recommended_usage', 1)
                 if term:
-                    primary_terms.append(f"{term} (importance: {importance:.2f}, usage: {usage})")
-            
-            primary_terms_str = "\n".join(primary_terms)
+                    primary_terms_with_usage.append({
+                        'term': term,
+                        'importance': importance,
+                        'usage': usage
+                    })
         
-        secondary_terms_str = ""
+        # Format primary terms for better inclusion in the prompt
+        primary_terms_list = []
+        for term_info in primary_terms_with_usage:
+            primary_terms_list.append(f"{term_info['term']} (use {term_info['usage']} times)")
+        
+        primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
+        
+        # IMPROVED: Better format for secondary terms
+        secondary_terms_list = []
         if term_data and 'secondary_terms' in term_data:
-            secondary_terms = []
             for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 if term and importance > 0.5:
-                    secondary_terms.append(f"{term} (importance: {importance:.2f})")
-            
-            secondary_terms_str = "\n".join(secondary_terms)
+                    secondary_terms_list.append(term)
         
+        secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms_list])
+        
+        # Format topics to cover
         topics_to_cover_str = ""
         if term_data and 'topics' in term_data:
             topics = []
@@ -1494,20 +1503,18 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # Generate full article in a single request with improved guidelines for flow and length
-            # The key improvement is generating the entire article in a single cohesive request rather than
-            # separate sections, which ensures better flow between sections
+            # IMPROVED: Better instructions for incorporating primary and secondary terms
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
                 max_tokens=4500,
                 system="""You are an expert content writer who crafts cohesive, flowing articles.
-                You write in a natural, varied style that maintains consistent tone throughout.
+                You write in a natural, varied style that maintains consistent tone throughout while incorporating specific terms and keywords for SEO.
                 
                 Your writing principles:
                 1. Maintain natural flow between paragraphs and sections
                 2. Vary vocabulary and sentence structure to avoid repetition
                 3. Use pronouns, synonyms, and context references to avoid repeating the same terms
-                4. Balance SEO needs with readability - include keywords naturally without overusing them
+                4. Incorporate required SEO terms the exact number of times specified
                 5. Keep content concise while being comprehensive""",
                 
                 messages=[
@@ -1525,7 +1532,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     2. For each section, write 2-3 medium-length paragraphs (not overly long paragraphs)
                     3. NATURAL FLOW: Ensure smooth transitions between sections
                     4. LANGUAGE VARIETY: Use a variety of terms and phrasings to discuss the topic
-                    5. KEYWORD BALANCE: Use the term "{keyword}" naturally but DON'T OVERUSE it
+                    5. KEYWORD USAGE: Use the term "{keyword}" throughout the article (5-7 times total)
                     
                     Content guidelines:
                     - Start with a concise introduction (100-150 words)
@@ -1534,9 +1541,13 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - End with a brief conclusion (100-150 words)
                     - Use bullet points or numbered lists where appropriate
                     
-                    Important terms to incorporate naturally (don't overuse):
-                    Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
-                    Secondary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('secondary_terms', [])[:5]])}
+                    CRITICAL SEO REQUIREMENT - Primary Terms:
+                    You MUST include each of these primary terms the EXACT number of times specified (this is essential for SEO):
+                    {primary_terms_str}
+                    
+                    CRITICAL SEO REQUIREMENT - Secondary Terms:
+                    Include each of these secondary terms at least once in the article (this is essential for SEO):
+                    {secondary_terms_str}
                     
                     Address these questions within the content:
                     {paa_str}
@@ -1547,6 +1558,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     3. Use pronouns and context to avoid repetition 
                     4. Write compact paragraphs (3-4 sentences each is ideal)
                     5. STRICTLY maintain 1,800-2,000 word count total
+                    6. ENSURE you include each primary term exactly the number of times specified
+                    7. ENSURE you include each secondary term at least once
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
@@ -2072,65 +2085,70 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         else:
             doc.add_heading('Generated Article with Internal Links', level=1)
         
-        # Parse HTML content and add to document, preserving links
-        soup = BeautifulSoup(article_content, 'html.parser')
-        
-        for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
-            if element.name in ['h1', 'h2', 'h3']:
-                level = int(element.name[1])
-                doc.add_heading(element.get_text(), level=level)
-            elif element.name == 'p':
-                p = doc.add_paragraph()
-                
-                # Process paragraph content including links
-                for content in element.contents:
-                    if isinstance(content, str):
-                        # Plain text
-                        p.add_run(content)
-                    elif content.name == 'a':
-                        # Add link as hyperlinked text with blue color
-                        url = content.get('href', '')
-                        text = content.get_text()
-                        if url and text:
-                            run = p.add_run(text)
-                            run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
-                            run.underline = True
-                            # Note: This creates the visual appearance but not functional hyperlinks
-                    else:
-                        # Other tags
-                        p.add_run(content.get_text())
-                        
-            elif element.name == 'ul':
-                for li in element.find_all('li'):
-                    p = doc.add_paragraph(style='List Bullet')
-                    for content in li.contents:
+        # IMPROVED: Parse HTML content and add to document more effectively
+        # First check if article_content contains HTML tags
+        if article_content and ('<h1>' in article_content or '<p>' in article_content):
+            soup = BeautifulSoup(article_content, 'html.parser')
+            
+            for element in soup.find_all(['h1', 'h2', 'h3', 'p', 'ul', 'ol']):
+                if element.name in ['h1', 'h2', 'h3']:
+                    level = int(element.name[1])
+                    doc.add_heading(element.get_text(), level=level)
+                elif element.name == 'p':
+                    p = doc.add_paragraph()
+                    
+                    # Process paragraph content including links
+                    for content in element.contents:
                         if isinstance(content, str):
+                            # Plain text
                             p.add_run(content)
                         elif content.name == 'a':
+                            # Add link as hyperlinked text with blue color
                             url = content.get('href', '')
                             text = content.get_text()
                             if url and text:
                                 run = p.add_run(text)
-                                run.font.color.rgb = RGBColor(0, 0, 255)
+                                run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
                                 run.underline = True
+                                # Note: This creates the visual appearance but not functional hyperlinks
                         else:
+                            # Other tags
                             p.add_run(content.get_text())
                             
-            elif element.name == 'ol':
-                for i, li in enumerate(element.find_all('li')):
-                    p = doc.add_paragraph(style='List Number')
-                    for content in li.contents:
-                        if isinstance(content, str):
-                            p.add_run(content)
-                        elif content.name == 'a':
-                            url = content.get('href', '')
-                            text = content.get_text()
-                            if url and text:
-                                run = p.add_run(text)
-                                run.font.color.rgb = RGBColor(0, 0, 255)
-                                run.underline = True
-                        else:
-                            p.add_run(content.get_text())
+                elif element.name == 'ul':
+                    for li in element.find_all('li'):
+                        p = doc.add_paragraph(style='List Bullet')
+                        for content in li.contents:
+                            if isinstance(content, str):
+                                p.add_run(content)
+                            elif content.name == 'a':
+                                url = content.get('href', '')
+                                text = content.get_text()
+                                if url and text:
+                                    run = p.add_run(text)
+                                    run.font.color.rgb = RGBColor(0, 0, 255)
+                                    run.underline = True
+                            else:
+                                p.add_run(content.get_text())
+                                
+                elif element.name == 'ol':
+                    for i, li in enumerate(element.find_all('li')):
+                        p = doc.add_paragraph(style='List Number')
+                        for content in li.contents:
+                            if isinstance(content, str):
+                                p.add_run(content)
+                            elif content.name == 'a':
+                                url = content.get('href', '')
+                                text = content.get_text()
+                                if url and text:
+                                    run = p.add_run(text)
+                                    run.font.color.rgb = RGBColor(0, 0, 255)
+                                    run.underline = True
+                            else:
+                                p.add_run(content.get_text())
+        else:
+            # If no HTML tags found, add content as plain text with line breaks
+            doc.add_paragraph(article_content)
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
