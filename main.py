@@ -2584,7 +2584,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
             max_tokens=2500,
-            system="You are an expert SEO content analyst. ALWAYS return valid, properly formatted JSON with no errors.",
+            system="You are an expert SEO content analyst. Return your analysis in VALID JSON format following the provided template exactly.",
             messages=[
                 {"role": "user", "content": f"""
                 Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
@@ -2616,14 +2616,16 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                 6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
                 7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
                 
-                Format your response as a VALID JSON object like this (BE VERY CAREFUL with commas, brackets, and syntax):
+                RETURN YOUR ANALYSIS USING EXACTLY THIS STRUCTURE:
+                
+                ```json
                 {{
                     "missing_headings": [
                         {{ 
-                            "heading": "Heading Text", 
+                            "heading": "Example Heading Text", 
                             "level": 2, 
                             "suggested_content": "Brief description of what this section should cover",
-                            "insert_after": "Name of existing heading to insert after or 'START' for beginning or 'END' for end"
+                            "insert_after": "Example Existing Heading"
                         }}
                     ],
                     "revised_headings": [
@@ -2657,61 +2659,128 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                         }}
                     ]
                 }}
+                ```
                 
-                CRITICAL: Ensure your JSON is properly formatted with NO SYNTAX ERRORS. Double-check all quotes, commas, and brackets.
+                MAKE SURE your JSON is valid. Do not include any trailing commas after the last element in arrays. Do not include any text outside the JSON structure.
                 """}
             ],
-            temperature=0.1  # Lower temperature for more precise output
+            temperature=0.0  # Use temperature 0 for most consistent output
         )
         
-        # Extract and parse JSON response
+        # Extract content
         content = response.content[0].text
         
-        # Find JSON content within response (in case there's additional text)
-        json_match = re.search(r'({.*})', content, re.DOTALL)
+        # Extract JSON from the response (between triple backticks if present)
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
+        else:
+            # Try to find just JSON without the backticks
+            json_match = re.search(r'(\{\s*"missing_headings".*\})', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(1)
         
-        # Try to fix common JSON errors
+        logger.info(f"Extracted JSON content: {content[:500]}...")
+        
+        # Custom JSON repair function
+        def repair_json(json_str):
+            # Remove trailing commas in lists
+            json_str = re.sub(r',(\s*[\]}])', r'\1', json_str)
+            
+            # Remove unmatched/dangling commas
+            json_str = re.sub(r',\s*$', '', json_str)
+            
+            # Ensure proper array formatting
+            json_str = re.sub(r'}\s*{', '},{', json_str)
+            
+            # Ensure proper property name formatting
+            json_str = re.sub(r'([{,])\s*([^"{\s][^:]*?):', r'\1"\2":', json_str)
+            
+            # Fix quotes around property values
+            json_str = re.sub(r':\s*([^",{\[\]\d\s][^,}\]]*?)([,}\]])', r':"\1"\2', json_str)
+            
+            return json_str
+        
+        # Try multiple approaches to parse the JSON
         try:
+            # First attempt - direct parsing
             content_gaps = json.loads(content)
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON decode error: {e}")
-            logger.warning("Attempting to fix JSON...")
-            
-            # Fix common JSON errors
-            # 1. Fix missing commas between objects in arrays
-            fixed_content = re.sub(r'}\s*{', '},{', content)
-            
-            # 2. Fix trailing commas in arrays
-            fixed_content = re.sub(r',\s*]', ']', fixed_content)
-            
-            # 3. Fix trailing commas in objects
-            fixed_content = re.sub(r',\s*}', '}', fixed_content)
-            
-            # 4. Add commas between array items where they might be missing
-            fixed_content = re.sub(r'"\s*{', '",{', fixed_content)
-            
-            # 5. Fix extra commas in empty arrays
-            fixed_content = re.sub(r'\[\s*,', '[', fixed_content)
-            fixed_content = re.sub(r',\s*\]', ']', fixed_content)
-            
+            logger.warning(f"Initial JSON parse failed: {e}")
             try:
+                # Second attempt - basic repair
+                fixed_content = repair_json(content)
                 content_gaps = json.loads(fixed_content)
-            except json.JSONDecodeError as e2:
-                logger.error(f"Failed to fix JSON: {e2}")
-                logger.error(f"Original content: {content[:500]}...")
-                
-                # Create a basic structure for content gaps
-                content_gaps = {
-                    "missing_headings": [],
-                    "revised_headings": [],
-                    "content_gaps": [{"topic": "JSON parsing error", "details": "The analysis could not be properly formatted. Please try again.", "suggested_content": ""}],
-                    "expansion_areas": [],
-                    "semantic_relevancy_issues": [],
-                    "term_usage_issues": [],
-                    "unanswered_questions": []
-                }
+            except json.JSONDecodeError as e:
+                logger.warning(f"Basic repair failed: {e}")
+                try:
+                    # Third attempt - create minimally valid JSON with key sections
+                    # Create a structured template
+                    template = {
+                        "missing_headings": [],
+                        "revised_headings": [],
+                        "content_gaps": [],
+                        "expansion_areas": [],
+                        "semantic_relevancy_issues": [],
+                        "term_usage_issues": [],
+                        "unanswered_questions": []
+                    }
+                    
+                    # Extract data section by section
+                    sections = [
+                        (r'"missing_headings"\s*:\s*\[(.*?)\]', "missing_headings"),
+                        (r'"revised_headings"\s*:\s*\[(.*?)\]', "revised_headings"),
+                        (r'"content_gaps"\s*:\s*\[(.*?)\]', "content_gaps"),
+                        (r'"expansion_areas"\s*:\s*\[(.*?)\]', "expansion_areas"),
+                        (r'"semantic_relevancy_issues"\s*:\s*\[(.*?)\]', "semantic_relevancy_issues"),
+                        (r'"term_usage_issues"\s*:\s*\[(.*?)\]', "term_usage_issues"),
+                        (r'"unanswered_questions"\s*:\s*\[(.*?)\]', "unanswered_questions")
+                    ]
+                    
+                    # Try to parse each section individually
+                    for pattern, key in sections:
+                        match = re.search(pattern, content, re.DOTALL)
+                        if match:
+                            section_content = match.group(1).strip()
+                            if section_content:
+                                try:
+                                    # Add brackets and try to parse
+                                    items = json.loads(f"[{section_content}]")
+                                    template[key] = items
+                                except:
+                                    # If that fails, extract individual items
+                                    items = []
+                                    item_matches = re.finditer(r'\{(.*?)\}', section_content, re.DOTALL)
+                                    for item_match in item_matches:
+                                        item_str = '{' + item_match.group(1) + '}'
+                                        try:
+                                            item = json.loads(repair_json(item_str))
+                                            items.append(item)
+                                        except:
+                                            pass
+                                    template[key] = items
+                    
+                    # Use the repaired template
+                    content_gaps = template
+                    
+                except Exception as e3:
+                    logger.error(f"All JSON repair attempts failed: {e3}")
+                    # Create a minimal structure
+                    content_gaps = {
+                        "missing_headings": [],
+                        "revised_headings": [],
+                        "content_gaps": [{"topic": "Error in content analysis", "details": "There was an error processing the analysis. Please try again.", "suggested_content": ""}],
+                        "expansion_areas": [],
+                        "semantic_relevancy_issues": [],
+                        "term_usage_issues": [],
+                        "unanswered_questions": []
+                    }
+        
+        # Validate the structure has all required keys
+        for key in ["missing_headings", "revised_headings", "content_gaps", "expansion_areas",
+                    "semantic_relevancy_issues", "term_usage_issues", "unanswered_questions"]:
+            if key not in content_gaps:
+                content_gaps[key] = []
         
         return content_gaps, True
     
@@ -2719,7 +2788,17 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         error_msg = f"Exception in analyze_content_gaps: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        return {}, False
+        
+        # Return minimal valid structure
+        return {
+            "missing_headings": [],
+            "revised_headings": [],
+            "content_gaps": [{"topic": "Error in analysis", "details": f"Error: {str(e)}", "suggested_content": ""}],
+            "expansion_areas": [],
+            "semantic_relevancy_issues": [],
+            "term_usage_issues": [],
+            "unanswered_questions": []
+        }, False
 
 def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str, score_data: Dict = None) -> Tuple[BytesIO, bool]:
     """
