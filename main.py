@@ -1357,57 +1357,63 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         # Get default H1 if not present
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
         
+        # IMPROVE: Limit number of sections to prevent excessive length
+        # Only take the first 3-4 sections to ensure we can complete the article
+        limited_sections = semantic_structure.get('sections', [])[:4]
+        
         # Prepare section structure with error handling
         sections_str = ""
-        for section in semantic_structure.get('sections', []):
+        for section in limited_sections:
             if section and isinstance(section, dict) and 'h2' in section:
                 sections_str += f"- {section.get('h2')}\n"
-                for subsection in section.get('subsections', []):
+                # Limit subsections to 2 per section
+                for subsection in section.get('subsections', [])[:2]:
                     if subsection and isinstance(subsection, dict) and 'h3' in subsection:
                         sections_str += f"  - {subsection.get('h3')}\n"
         
         # Add default section if none exist
         if not sections_str:
-            sections_str = f"- Introduction to {keyword}\n- Key Benefits\n- How to Use\n- Tips and Best Practices\n- Conclusion\n"
+            sections_str = f"- Introduction to {keyword}\n- Key Benefits\n- How to Use\n- Conclusion\n"
         
         # Prepare related keywords with error handling
         related_kw_list = []
         if related_keywords and isinstance(related_keywords, list):
-            for kw in related_keywords[:10]:
+            for kw in related_keywords[:5]:  # LIMIT to top 5 only
                 if kw and isinstance(kw, dict) and 'keyword' in kw:
                     related_kw_list.append(kw.get('keyword', ''))
         
         # Add default keywords if none exist
         if not related_kw_list:
-            related_kw_list = [f"{keyword} guide", f"best {keyword}", f"{keyword} tips", f"how to use {keyword}"]
+            related_kw_list = [f"{keyword} guide", f"best {keyword}", f"{keyword} tips"]
         
         related_kw_str = ", ".join(related_kw_list)
         
         # Prepare SERP features with error handling
         serp_features_list = []
         if serp_features and isinstance(serp_features, list):
-            for feature in serp_features[:5]:
+            for feature in serp_features[:3]:  # LIMIT to top 3 only
                 if feature and isinstance(feature, dict) and 'feature_type' in feature:
                     count = feature.get('count', 1)
                     serp_features_list.append(f"{feature.get('feature_type')} ({count})")
         
         # Add default features if none exist
         if not serp_features_list:
-            serp_features_list = ["featured snippet", "people also ask", "images"]
+            serp_features_list = ["featured snippet", "people also ask"]
         
         serp_features_str = ", ".join(serp_features_list)
         
-        # Prepare People Also Asked questions
+        # Prepare People Also Asked questions - LIMIT to top 3
         paa_str = ""
         if paa_questions and isinstance(paa_questions, list):
-            for i, question in enumerate(paa_questions[:5], 1):
+            for i, question in enumerate(paa_questions[:3], 1):
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
         # IMPROVED: Better format for primary and secondary terms with their recommended usage
+        # LIMIT to fewer terms to prevent overloading
         primary_terms_with_usage = []
         if term_data and 'primary_terms' in term_data:
-            for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
+            for term_info in term_data.get('primary_terms', [])[:5]:  # LIMIT to top 5 primary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 usage = term_info.get('recommended_usage', 1)
@@ -1425,28 +1431,16 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
         
-        # IMPROVED: Better format for secondary terms
+        # IMPROVED: Better format for secondary terms - LIMIT to fewer terms
         secondary_terms_list = []
         if term_data and 'secondary_terms' in term_data:
-            for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
+            for term_info in term_data.get('secondary_terms', [])[:8]:  # LIMIT to top 8 secondary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 if term and importance > 0.5:
                     secondary_terms_list.append(term)
         
         secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms_list])
-        
-        # Format topics to cover
-        topics_to_cover_str = ""
-        if term_data and 'topics' in term_data:
-            topics = []
-            for topic_info in term_data.get('topics', []):
-                topic = topic_info.get('topic', '')
-                description = topic_info.get('description', '')
-                if topic:
-                    topics.append(f"{topic}: {description}")
-            
-            topics_to_cover_str = "\n".join(topics)
         
         if guidance_only:
             # Generate writing guidance for each section
@@ -1484,9 +1478,6 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Secondary terms (try to include these at least once):
                     {secondary_terms_str}
                     
-                    Key topics to cover:
-                    {topics_to_cover_str}
-                    
                     Format the guidance with proper HTML:
                     - Main title in <h1> tags
                     - Section headings in <h2> tags
@@ -1494,7 +1485,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
                     
-                    Aim for comprehensive guidance that will help a writer create a 1,500-2,000 word article.
+                    Aim for comprehensive guidance that will help a writer create a 1,200-1,500 word article.
                     """}
                 ],
                 temperature=0.5
@@ -1503,66 +1494,63 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # IMPROVED: Better instructions for incorporating primary and secondary terms
-            # Also added instructions for better content structure, shorter paragraphs, and H4 subheadings
+            # SIGNIFICANTLY IMPROVED: Stricter instructions for length, structure, and completeness
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=4500,
-                system="""You are an expert content writer who crafts cohesive, flowing articles.
-                You write in a natural, varied style that maintains consistent tone throughout while incorporating specific terms and keywords for SEO.
+                max_tokens=4000,
+                system="""You are an expert content writer who creates concise, structured articles.
+                You are known for completing articles within the specified word count while covering all requested sections.
                 
                 Your writing principles:
-                1. Write concise paragraphs (2-4 sentences each) for better readability
-                2. Create clear heading hierarchy (H1, H2, H3, H4) for organized content
-                3. Use proper content structure with logically grouped information
-                4. Maintain natural flow between paragraphs and sections
-                5. Integrate required SEO terms without forcing them
-                6. Use bullet points where appropriate to break up text""",
+                1. Write extremely concise paragraphs (2-3 sentences each)
+                2. Use clear headings for organization (H1, H2, H3, H4)
+                3. Cover all requested sections briefly rather than some sections in depth
+                4. Integrate required SEO terms naturally throughout the article
+                5. Prioritize completeness over depth""",
                 
                 messages=[
                     {"role": "user", "content": f"""
-                    Write a comprehensive article about "{keyword}" that maintains natural flow and optimal structure for readability.
+                    Write a concise article about "{keyword}" that covers ALL the sections outlined below.
                     
                     Use this semantic structure:
                     H1: {h1}
                     
-                    Sections to include (select 4-5 most important H2s):
+                    Sections to include (YOU MUST INCLUDE ALL SECTIONS LISTED - this is critical):
                     {sections_str}
                     
-                    FORMAT AND STRUCTURE REQUIREMENTS:
-                    1. Target LENGTH: Write exactly 1,800-2,000 words total
-                    2. PARAGRAPH LENGTH: Keep all paragraphs to 2-4 sentences each (very important!)
-                    3. HEADING HIERARCHY: Use H1 > H2 > H3 > H4 structure with H4s for subtopics 
-                    4. Use H4 subheadings to organize content within H3 sections
-                    5. Add bullet points for lists rather than dense paragraphs
-                    6. Ensure smooth transitions between sections
+                    STRICT LENGTH REQUIREMENTS:
+                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words maximum (STRICTLY ENFORCE THIS)
+                    2. PARAGRAPH LENGTH: Each paragraph must be only 2-3 sentences (VERY IMPORTANT)
                     
-                    CONTENT GUIDELINES:
-                    - Start with a concise introduction (100-150 words)
-                    - Include 4-5 main sections (H2) 
-                    - Use 2-3 subsections (H3) under each H2
-                    - Add H4 subheadings to organize information within H3 sections
-                    - End with a brief conclusion (100-150 words)
+                    SECTION WORD COUNTS (to ensure completeness):
+                    - Introduction: 100-150 words
+                    - Each H2 section: 150-200 words maximum
+                    - Each H3 subsection: 100-150 words maximum
+                    - Conclusion: 100 words maximum
                     
-                    CRITICAL SEO REQUIREMENT - Primary Terms:
-                    You MUST include each of these primary terms the EXACT number of times specified:
+                    CONTENT STRUCTURE:
+                    1. Start with a brief introduction
+                    2. Include ALL the H2 sections listed above (crucial)
+                    3. Include at least 1-2 H3 subsections under each H2
+                    4. Add H4 subheadings where helpful for organization
+                    5. End with a brief conclusion
+                    
+                    CRITICAL SEO REQUIREMENTS:
+                    Primary terms to include (with exact usage count):
                     {primary_terms_str}
                     
-                    CRITICAL SEO REQUIREMENT - Secondary Terms:
-                    Include each of these secondary terms at least once in the article:
+                    Secondary terms to include (at least once each):
                     {secondary_terms_str}
                     
-                    Address these questions within the content:
+                    Address these questions briefly within the content:
                     {paa_str}
                     
                     CRITICAL WRITING INSTRUCTIONS:
-                    1. DO NOT use rhetorical questions in the content
-                    2. Start paragraphs with direct, informative statements
-                    3. Use pronouns and context to avoid repetition 
-                    4. KEEP PARAGRAPHS SHORT (2-4 sentences each)
-                    5. STRICTLY maintain 1,800-2,000 word count total
-                    6. ENSURE you include each primary term exactly the number of times specified
-                    7. ENSURE you include each secondary term at least once
+                    1. DO NOT use rhetorical questions
+                    2. ENSURE every paragraph is only 2-3 sentences
+                    3. ENSURE all listed sections are included
+                    4. MAINTAIN STRICT TOTAL WORD COUNT of 1,200-1,500 words
+                    5. USE bullet points instead of long paragraphs for lists
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
@@ -1573,7 +1561,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                     """}
                 ],
-                temperature=0.5
+                temperature=0.4  # Reduced temperature for more consistent output
             )
             
             article_content = response.content[0].text
@@ -2086,84 +2074,115 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
-        # FIXED: Improved heading detection and processing
+        # COMPLETELY REVISED: Robust article content parsing
         if article_content and isinstance(article_content, str):
-            # Parse HTML content with Beautiful Soup
-            soup = BeautifulSoup(article_content, 'html.parser')
-            
-            # Find all the heading and content elements
-            elements = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol'])
-            
-            # Process each element
-            for element in elements:
-                # Process headings
-                if element.name.startswith('h') and len(element.name) == 2:
-                    try:
-                        # Extract the heading level and text
-                        level = int(element.name[1])
-                        heading_text = element.get_text().strip()
-                        
-                        # Add the heading to the document
-                        if heading_text:
-                            doc.add_heading(heading_text, level=level)
-                    except (ValueError, IndexError) as e:
-                        # Fallback if we can't parse the heading properly
-                        doc.add_paragraph(element.get_text()).bold = True
-                
-                # Process paragraphs
-                elif element.name == 'p':
-                    p = doc.add_paragraph()
+            # Check if content contains HTML
+            if '<' in article_content and '>' in article_content:
+                try:
+                    # Parse HTML content with Beautiful Soup
+                    soup = BeautifulSoup(article_content, 'html.parser')
                     
-                    # Process paragraph content including links
-                    for content in element.contents:
-                        if isinstance(content, str):
-                            # Plain text
-                            p.add_run(content)
-                        elif content.name == 'a':
-                            # Add link as hyperlinked text with blue color
-                            url = content.get('href', '')
-                            text = content.get_text()
-                            if url and text:
-                                run = p.add_run(text)
-                                run.font.color.rgb = RGBColor(0, 0, 255)  # Blue
-                                run.underline = True
+                    # First add the H1 title if it exists
+                    h1_tags = soup.find_all('h1')
+                    if h1_tags:
+                        h1_text = h1_tags[0].get_text().strip()
+                        if h1_text:
+                            doc.add_heading(h1_text, level=1)
+                    
+                    # Find all content elements sequentially to maintain proper order
+                    for element in soup.body.children if soup.body else soup.children:
+                        # Skip non-tag elements (like navigable strings)
+                        if not hasattr(element, 'name'):
+                            continue
+                            
+                        # Process by element type
+                        if element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                            # Process headings - extract level from tag name
+                            level = int(element.name[1])
+                            heading_text = element.get_text().strip()
+                            if heading_text:
+                                doc.add_heading(heading_text, level=level)
+                        
+                        elif element.name == 'p':
+                            # Process paragraphs
+                            p_text = element.get_text().strip()
+                            if p_text:
+                                doc.add_paragraph(p_text)
+                        
+                        elif element.name == 'ul':
+                            # Process unordered lists
+                            for li in element.find_all('li', recursive=False):
+                                li_text = li.get_text().strip()
+                                if li_text:
+                                    doc.add_paragraph(li_text, style='List Bullet')
+                        
+                        elif element.name == 'ol':
+                            # Process ordered lists
+                            for li in element.find_all('li', recursive=False):
+                                li_text = li.get_text().strip()
+                                if li_text:
+                                    doc.add_paragraph(li_text, style='List Number')
+                
+                except Exception as e:
+                    # Fallback to direct text if HTML parsing fails
+                    logger.error(f"HTML parsing error: {e}")
+                    # Add content as plain text with paragraph breaks
+                    paragraphs = article_content.split('\n\n')
+                    for para in paragraphs:
+                        # Check if paragraph looks like a heading
+                        para = para.strip()
+                        if para.startswith('# '):
+                            doc.add_heading(para[2:], level=1)
+                        elif para.startswith('## '):
+                            doc.add_heading(para[3:], level=2)
+                        elif para.startswith('### '):
+                            doc.add_heading(para[4:], level=3)
+                        elif para.startswith('#### '):
+                            doc.add_heading(para[5:], level=4)
+                        elif para:
+                            doc.add_paragraph(para)
+            else:
+                # Content is plain text - try to identify headings by format
+                lines = article_content.split('\n')
+                in_list = False
+                
+                for i, line in enumerate(lines):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # Check for Markdown-style headings
+                    if line.startswith('# '):
+                        doc.add_heading(line[2:], level=1)
+                    elif line.startswith('## '):
+                        doc.add_heading(line[3:], level=2)
+                    elif line.startswith('### '):
+                        doc.add_heading(line[4:], level=3)
+                    elif line.startswith('#### '):
+                        doc.add_heading(line[5:], level=4)
+                    # Check for list items
+                    elif line.startswith('- ') or line.startswith('* '):
+                        doc.add_paragraph(line[2:], style='List Bullet')
+                        in_list = True
+                    elif line.startswith('1. ') or line.startswith('1) '):
+                        doc.add_paragraph(line[3:], style='List Number')
+                        in_list = True
+                    # Check for potential heading (all caps, short line)
+                    elif line.isupper() and len(line) < 80:
+                        doc.add_heading(line, level=2)
+                    # Regular paragraph
+                    else:
+                        # Check if this could be a non-markdown heading
+                        next_line = lines[i+1].strip() if i+1 < len(lines) else ""
+                        if (len(line) < 80 and next_line and 
+                            (all(c == '=' for c in next_line) or all(c == '-' for c in next_line))):
+                            # This looks like a heading with underline
+                            level = 1 if '=' in next_line else 2
+                            doc.add_heading(line, level=level)
                         else:
-                            # Other tags
-                            p.add_run(content.get_text())
-                
-                # Process unordered lists
-                elif element.name == 'ul':
-                    for li in element.find_all('li'):
-                        p = doc.add_paragraph(style='List Bullet')
-                        for content in li.contents:
-                            if isinstance(content, str):
-                                p.add_run(content)
-                            elif content.name == 'a':
-                                url = content.get('href', '')
-                                text = content.get_text()
-                                if url and text:
-                                    run = p.add_run(text)
-                                    run.font.color.rgb = RGBColor(0, 0, 255)
-                                    run.underline = True
-                            else:
-                                p.add_run(content.get_text())
-                
-                # Process ordered lists
-                elif element.name == 'ol':
-                    for li in element.find_all('li'):
-                        p = doc.add_paragraph(style='List Number')
-                        for content in li.contents:
-                            if isinstance(content, str):
-                                p.add_run(content)
-                            elif content.name == 'a':
-                                url = content.get('href', '')
-                                text = content.get_text()
-                                if url and text:
-                                    run = p.add_run(text)
-                                    run.font.color.rgb = RGBColor(0, 0, 255)
-                                    run.underline = True
-                            else:
-                                p.add_run(content.get_text())
+                            # Regular paragraph
+                            doc.add_paragraph(line)
+                            in_list = False
         
         # Section 7: Internal Linking (if provided)
         if internal_links:
