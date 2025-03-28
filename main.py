@@ -1557,6 +1557,11 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                        - Use contractions (don't, you'll, they're) where it sounds natural
                        - Vary paragraph openings to maintain reader interest
                        - Connect ideas through logical progression, not forced transitions
+
+                    4. Ensure each content section is succinct and stays on point. 
+                       - Each content section should be 1-2 paragraphs for user digestibility.
+                       - Focus on quality / conciseness instead of exhaustive completeness. 
+                       - Don't include additional copy if it isn't topically relevant. 
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
