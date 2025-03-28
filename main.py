@@ -1494,128 +1494,73 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # IMPROVED: Generate article section-by-section to avoid cutoff issues
-            
-            # Initialize the article with the title
-            article_parts = [f"<h1>{h1}</h1>"]
-            
-            # Generate introduction
-            intro_response = client.messages.create(
+            # Generate full article in a single request with improved guidelines for flow and length
+            # The key improvement is generating the entire article in a single cohesive request rather than
+            # separate sections, which ensures better flow between sections
+            response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=1000,
-                system="You are an expert content writer crafting engaging, informative articles.",
+                max_tokens=4500,
+                system="""You are an expert content writer who crafts cohesive, flowing articles.
+                You write in a natural, varied style that maintains consistent tone throughout.
+                
+                Your writing principles:
+                1. Maintain natural flow between paragraphs and sections
+                2. Vary vocabulary and sentence structure to avoid repetition
+                3. Use pronouns, synonyms, and context references to avoid repeating the same terms
+                4. Balance SEO needs with readability - include keywords naturally without overusing them
+                5. Keep content concise while being comprehensive""",
+                
                 messages=[
                     {"role": "user", "content": f"""
-                    Write a compelling introduction for an article about "{keyword}".
+                    Write a comprehensive article about "{keyword}" that maintains natural flow from section to section.
                     
-                    The article title is: {h1}
+                    Use this semantic structure:
+                    H1: {h1}
                     
-                    Introduction guidelines:
-                    1. Write 2-3 well-crafted paragraphs (200-250 words total)
-                    2. Introduce the topic and its importance
-                    3. Include the main keyword "{keyword}" naturally
-                    4. Briefly outline what readers will learn
-                    5. DO NOT use rhetorical questions
+                    Sections to include (select 4-5 most important H2s and 1-2 relevant H3s per H2):
+                    {sections_str}
                     
-                    Format your introduction with proper HTML paragraph tags (<p>...</p>).
+                    Core requirements:
+                    1. Target LENGTH: Write exactly 1,800-2,000 words total (very important!)
+                    2. For each section, write 2-3 medium-length paragraphs (not overly long paragraphs)
+                    3. NATURAL FLOW: Ensure smooth transitions between sections
+                    4. LANGUAGE VARIETY: Use a variety of terms and phrasings to discuss the topic
+                    5. KEYWORD BALANCE: Use the term "{keyword}" naturally but DON'T OVERUSE it
+                    
+                    Content guidelines:
+                    - Start with a concise introduction (100-150 words)
+                    - Include 4-5 main sections (H2) with 2-3 paragraphs each
+                    - Add 1-2 subsections (H3) where helpful, with 1-2 paragraphs each
+                    - End with a brief conclusion (100-150 words)
+                    - Use bullet points or numbered lists where appropriate
+                    
+                    Important terms to incorporate naturally (don't overuse):
+                    Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                    Secondary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('secondary_terms', [])[:5]])}
+                    
+                    Address these questions within the content:
+                    {paa_str}
+                    
+                    CRITICAL WRITING INSTRUCTIONS:
+                    1. DO NOT use rhetorical questions in the content
+                    2. Start paragraphs with direct, informative statements
+                    3. Use pronouns and context to avoid repetition 
+                    4. Write compact paragraphs (3-4 sentences each is ideal)
+                    5. STRICTLY maintain 1,800-2,000 word count total
+                    
+                    Format the article with proper HTML:
+                    - Main title in <h1> tags
+                    - Section headings in <h2> tags
+                    - Subsection headings in <h3> tags
+                    - Paragraphs in <p> tags
+                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                     """}
                 ],
                 temperature=0.5
             )
             
-            article_parts.append(intro_response.content[0].text)
-            
-            # Process each section and subsection
-            for section in semantic_structure.get('sections', []):
-                if section and isinstance(section, dict) and 'h2' in section:
-                    h2_title = section.get('h2', '')
-                    article_parts.append(f"<h2>{h2_title}</h2>")
-                    
-                    # Generate section content with explicit control over paragraph count
-                    section_response = client.messages.create(
-                        model="claude-3-7-sonnet-20250219",
-                        max_tokens=1200,
-                        system="You are an expert content writer crafting engaging, informative content.",
-                        messages=[
-                            {"role": "user", "content": f"""
-                            Write content for the section "{h2_title}" of an article about "{keyword}".
-                            
-                            Content requirements:
-                            1. Write 2-3 substantive paragraphs (200-250 words total)
-                            2. Be informative and provide valuable insights
-                            3. Include the main keyword "{keyword}" naturally
-                            4. DO NOT use rhetorical questions
-                            5. Start with direct, informative statements
-                            6. Include these primary terms if applicable: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:3]])}
-                            7. Address this question if relevant: {paa_questions[0].get('question', '') if paa_questions else ''}
-                            
-                            Format with proper HTML paragraph tags (<p>...</p>).
-                            """}
-                        ],
-                        temperature=0.5
-                    )
-                    
-                    article_parts.append(section_response.content[0].text)
-                    
-                    # Process subsections if any
-                    for subsection in section.get('subsections', []):
-                        if subsection and isinstance(subsection, dict) and 'h3' in subsection:
-                            h3_title = subsection.get('h3', '')
-                            article_parts.append(f"<h3>{h3_title}</h3>")
-                            
-                            # Generate subsection content with explicit paragraph control
-                            subsection_response = client.messages.create(
-                                model="claude-3-7-sonnet-20250219",
-                                max_tokens=1000,
-                                system="You are an expert content writer crafting valuable, detailed content.",
-                                messages=[
-                                    {"role": "user", "content": f"""
-                                    Write content for the subsection "{h3_title}" under the section "{h2_title}" for an article about "{keyword}".
-                                    
-                                    Content requirements:
-                                    1. Write 1-2 paragraphs (100-150 words total)
-                                    2. Be specific, detailed and actionable
-                                    3. DO NOT use rhetorical questions
-                                    4. Start with direct, informative statements
-                                    5. Include these specific terms if relevant: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:2] + term_data.get('secondary_terms', [])[:2]])}
-                                    
-                                    Format with proper HTML paragraph tags (<p>...</p>).
-                                    """}
-                                ],
-                                temperature=0.5
-                            )
-                            
-                            article_parts.append(subsection_response.content[0].text)
-            
-            # Generate conclusion
-            conclusion_response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
-                max_tokens=800,
-                system="You are an expert content writer crafting effective conclusions.",
-                messages=[
-                    {"role": "user", "content": f"""
-                    Write a conclusion for an article about "{keyword}" with the title "{h1}".
-                    
-                    Conclusion guidelines:
-                    1. Write 2-3 well-crafted paragraphs (200-250 words total)
-                    2. Summarize key points covered in the article
-                    3. Include the main keyword "{keyword}" naturally
-                    4. End with a practical takeaway or call to action
-                    5. DO NOT use rhetorical questions
-                    
-                    Format with proper HTML paragraph tags (<p>...</p>).
-                    """}
-                ],
-                temperature=0.5
-            )
-            
-            article_parts.append("<h2>Conclusion</h2>")
-            article_parts.append(conclusion_response.content[0].text)
-            
-            # Combine all parts to form the complete article
-            complete_article = "\n".join(article_parts)
-            
-            return complete_article, True
+            article_content = response.content[0].text
+            return article_content, True
     
     except Exception as e:
         error_msg = f"Exception in generate_article: {str(e)}"
