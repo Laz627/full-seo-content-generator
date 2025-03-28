@@ -1703,13 +1703,13 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> float:
     return similarity
 
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
-                                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+                                           openai_api_key: str, anthropic_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
     Generate internal links using paragraph-level semantic matching with embeddings
     Returns: article_with_links, links_added, success_status
     """
     try:
-        # Explicitly set OpenAI API key
+        # Using the OpenAI API key for embeddings
         openai.api_key = openai_api_key
         
         # Calculate max links based on word count
@@ -1718,7 +1718,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         # Log for debugging
         logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
         
-        # 1. Extract paragraphs from the article
+        # 1. Extract paragraphs from the article - IMPROVED
         soup = BeautifulSoup(article_content, 'html.parser')
         paragraphs = []
         
@@ -1775,9 +1775,9 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         paragraph_texts = [p['text'] for p in paragraphs]
         
         try:
-            # Get paragraph embeddings
+            # Get paragraph embeddings using OpenAI
             response = openai.Embedding.create(
-                model="text-embedding-3-large",
+                model="text-embedding-3-small",
                 input=paragraph_texts
             )
             paragraph_embeddings = [item['embedding'] for item in response['data']]
@@ -1835,8 +1835,8 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 
                 # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
                 try:
-                    # We'll use the OpenAI API key for Claude too since that's what's available
-                    client = anthropic.Anthropic(api_key=openai_api_key)
+                    # Use the Anthropic API key for Claude
+                    client = anthropic.Anthropic(api_key=anthropic_api_key)
                     anchor_response = client.messages.create(
                         model="claude-3-7-sonnet-20250219",
                         max_tokens=50,
@@ -3707,118 +3707,119 @@ def main():
                         st.markdown(st.session_state.results['article_content'], unsafe_allow_html=True)
     
     # Tab 4: Internal Linking
-    with tabs[3]:
-        st.header("Internal Linking")
+# Tab 4: Internal Linking
+with tabs[3]:
+    st.header("Internal Linking")
+    
+    is_guidance_only = st.session_state.results.get('guidance_only', False)
+    
+    # Check if content exists and determine which type
+    has_content = False
+    if is_guidance_only and 'guidance_content' in st.session_state.results:
+        has_content = True
+        content_type = "guidance"
+    elif not is_guidance_only and 'article_content' in st.session_state.results:
+        has_content = True
+        content_type = "article"
+    
+    if not has_content:
+        st.warning("Please generate content first (in the 'Article Generation' tab)")
+    elif is_guidance_only:
+        st.warning("Internal linking is only available for full articles, not writing guidance")
+    else:
+        st.write("Upload a spreadsheet with your site pages (CSV or Excel):")
+        st.write("The spreadsheet must contain columns: URL, Title, Meta Description")
         
-        is_guidance_only = st.session_state.results.get('guidance_only', False)
+        # Create sample template button
+        if st.button("Generate Sample Template"):
+            # Create sample dataframe
+            sample_data = {
+                'URL': ['https://example.com/page1', 'https://example.com/page2'],
+                'Title': ['Example Page 1', 'Example Page 2'],
+                'Meta Description': ['Description for page 1', 'Description for page 2']
+            }
+            sample_df = pd.DataFrame(sample_data)
+            
+            # Convert to CSV
+            csv = sample_df.to_csv(index=False)
+            
+            # Provide download button
+            st.download_button(
+                label="Download Sample CSV Template",
+                data=csv,
+                file_name="site_pages_template.csv",
+                mime="text/csv",
+            )
         
-        # Check if content exists and determine which type
-        has_content = False
-        if is_guidance_only and 'guidance_content' in st.session_state.results:
-            has_content = True
-            content_type = "guidance"
-        elif not is_guidance_only and 'article_content' in st.session_state.results:
-            has_content = True
-            content_type = "article"
+        # File uploader for spreadsheet
+        pages_file = st.file_uploader("Upload Site Pages Spreadsheet", type=['csv', 'xlsx', 'xls'])
         
-        if not has_content:
-            st.warning("Please generate content first (in the 'Article Generation' tab)")
-        elif is_guidance_only:
-            st.warning("Internal linking is only available for full articles, not writing guidance")
-        else:
-            st.write("Upload a spreadsheet with your site pages (CSV or Excel):")
-            st.write("The spreadsheet must contain columns: URL, Title, Meta Description")
-            
-            # Create sample template button
-            if st.button("Generate Sample Template"):
-                # Create sample dataframe
-                sample_data = {
-                    'URL': ['https://example.com/page1', 'https://example.com/page2'],
-                    'Title': ['Example Page 1', 'Example Page 2'],
-                    'Meta Description': ['Description for page 1', 'Description for page 2']
-                }
-                sample_df = pd.DataFrame(sample_data)
-                
-                # Convert to CSV
-                csv = sample_df.to_csv(index=False)
-                
-                # Provide download button
-                st.download_button(
-                    label="Download Sample CSV Template",
-                    data=csv,
-                    file_name="site_pages_template.csv",
-                    mime="text/csv",
-                )
-            
-            # File uploader for spreadsheet
-            pages_file = st.file_uploader("Upload Site Pages Spreadsheet", type=['csv', 'xlsx', 'xls'])
-            
-            # Batch size for embedding
-            batch_size = st.slider("Embedding Batch Size", 5, 50, 20, 
-                                   help="Larger batch size is faster but may hit API limits")
-            
-            if st.button("Generate Internal Links"):
-                if not openai_api_key:
-                    st.error("Please enter OpenAI API key for embeddings")
-                elif not anthropic_api_key:
-                    st.error("Please enter Anthropic API key for anchor text selection")
-                elif not pages_file:
-                    st.error("Please upload a spreadsheet with site pages")
-                else:
-                    with st.spinner("Processing site pages and generating internal links..."):
-                        start_time = time.time()
+        # Batch size for embedding
+        batch_size = st.slider("Embedding Batch Size", 5, 50, 20, 
+                               help="Larger batch size is faster but may hit API limits")
+        
+        if st.button("Generate Internal Links"):
+            if not openai_api_key:
+                st.error("Please enter OpenAI API key for embeddings")
+            elif not anthropic_api_key:
+                st.error("Please enter Anthropic API key for anchor text selection")
+            elif not pages_file:
+                st.error("Please upload a spreadsheet with site pages")
+            else:
+                with st.spinner("Processing site pages and generating internal links..."):
+                    start_time = time.time()
+                    
+                    # Parse spreadsheet
+                    pages, parse_success = parse_site_pages_spreadsheet(pages_file)
+                    
+                    if parse_success and pages:
+                        # Status update
+                        status_text = st.empty()
+                        status_text.text(f"Generating embeddings for {len(pages)} site pages...")
                         
-                        # Parse spreadsheet
-                        pages, parse_success = parse_site_pages_spreadsheet(pages_file)
+                        # Generate embeddings for site pages using OpenAI
+                        pages_with_embeddings, embed_success = embed_site_pages(
+                            pages, openai_api_key, batch_size
+                        )
                         
-                        if parse_success and pages:
-                            # Status update
-                            status_text = st.empty()
-                            status_text.text(f"Generating embeddings for {len(pages)} site pages...")
+                        if embed_success:
+                            # Count words in the article
+                            article_content = st.session_state.results['article_content']
+                            word_count = len(re.findall(r'\w+', article_content))
                             
-                            # Generate embeddings for site pages using OpenAI
-                            pages_with_embeddings, embed_success = embed_site_pages(
-                                pages, openai_api_key, batch_size
+                            status_text.text(f"Analyzing article content and generating internal links...")
+                            
+                            # Pass both API keys to the function
+                            article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
+                                article_content, pages_with_embeddings, openai_api_key, anthropic_api_key, word_count
                             )
                             
-                            if embed_success:
-                                # Count words in the article
-                                article_content = st.session_state.results['article_content']
-                                word_count = len(re.findall(r'\w+', article_content))
+                            if links_success:
+                                st.session_state.results['article_with_links'] = article_with_links
+                                st.session_state.results['internal_links'] = links_added
                                 
-                                status_text.text(f"Analyzing article content and generating internal links...")
+                                st.subheader("Article With Internal Links")
+                                st.markdown(article_with_links, unsafe_allow_html=True)
                                 
-                                # FIXED: Pass the OpenAI API key instead of the Anthropic API key
-                                article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
-                                    article_content, pages_with_embeddings, openai_api_key, word_count
-                                )
+                                st.subheader("Internal Links Added")
+                                for link in links_added:
+                                    st.write(f"**URL:** {link.get('url')}")
+                                    st.write(f"**Anchor Text:** {link.get('anchor_text')}")
+                                    st.write(f"**Context:** {link.get('context')}")
+                                    st.write("---")
                                 
-                                if links_success:
-                                    st.session_state.results['article_with_links'] = article_with_links
-                                    st.session_state.results['internal_links'] = links_added
-                                    
-                                    st.subheader("Article With Internal Links")
-                                    st.markdown(article_with_links, unsafe_allow_html=True)
-                                    
-                                    st.subheader("Internal Links Added")
-                                    for link in links_added:
-                                        st.write(f"**URL:** {link.get('url')}")
-                                        st.write(f"**Anchor Text:** {link.get('anchor_text')}")
-                                        st.write(f"**Context:** {link.get('context')}")
-                                        st.write("---")
-                                    
-                                    st.success(f"Internal linking completed in {format_time(time.time() - start_time)}")
-                                else:
-                                    st.error("Failed to generate internal links")
+                                st.success(f"Internal linking completed in {format_time(time.time() - start_time)}")
                             else:
-                                st.error("Failed to generate embeddings for site pages")
+                                st.error("Failed to generate internal links")
                         else:
-                            st.error("Failed to parse spreadsheet or no pages found")
-            
-            # Show previously generated links if available
-            if 'article_with_links' in st.session_state.results:
-                st.subheader("Previously Generated Article With Internal Links")
-                st.markdown(st.session_state.results['article_with_links'], unsafe_allow_html=True)
+                            st.error("Failed to generate embeddings for site pages")
+                    else:
+                        st.error("Failed to parse spreadsheet or no pages found")
+        
+        # Show previously generated links if available
+        if 'article_with_links' in st.session_state.results:
+            st.subheader("Previously Generated Article With Internal Links")
+            st.markdown(st.session_state.results['article_with_links'], unsafe_allow_html=True)
     
     # Tab 5: SEO Brief
     with tabs[4]:
