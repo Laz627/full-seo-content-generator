@@ -1777,7 +1777,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         try:
             # Get paragraph embeddings
             response = openai.Embedding.create(
-                model="text-embedding-3-large",
+                model="text-embedding-3-small",
                 input=paragraph_texts
             )
             paragraph_embeddings = [item['embedding'] for item in response['data']]
@@ -1971,7 +1971,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         logger.error(error_msg)
         logger.error(traceback.format_exc())
         return article_content, [], False
-
+              
 ###############################################################################
 # 10. Document Generation
 ###############################################################################
