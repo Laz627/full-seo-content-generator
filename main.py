@@ -1445,7 +1445,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             # Generate writing guidance for each section
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=2500,
+                max_tokens=7000,
                 system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
                     {"role": "user", "content": f"""
