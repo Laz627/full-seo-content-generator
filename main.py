@@ -1528,7 +1528,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             # Generate full article with balanced keyword usage and no redundant questions
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=8000,
+                max_tokens=4000,
                 temperature=0.5,
                 system=f"""You are an expert content writer crafting engaging, informative articles.
                 Write in a natural, conversational style that sounds like an experienced human writer.
@@ -1598,7 +1598,12 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                         - Paragraphs in <p> tags
                         - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                         
-                        Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
+                        """
+                        CRITICAL INSTRUCTION ON LENGTH: 
+                        - The TOTAL article MUST be 1,500-2,000 words MAXIMUM
+                        - This is a firm requirement - do not exceed this limit
+                        - Focus on quality over quantity
+                        - Prioritize covering the main keyword thoroughly over covering every possible topic
                         """
                     }
                 ]
