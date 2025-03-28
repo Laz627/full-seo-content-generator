@@ -20,6 +20,7 @@ import traceback
 import openpyxl
 import matplotlib.pyplot as plt
 import altair as alt
+import anthropic  # Add this to your imports
 
 # Configure logging
 logging.basicConfig(
@@ -552,13 +553,14 @@ def extract_headings(url: str) -> Dict[str, List[str]]:
 # 5. Content Scoring Functions (NEW)
 ###############################################################################
 
-def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str) -> Tuple[Dict, bool]:
+def extract_important_terms(competitor_contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
     """
     Extract important terms and topics from competitor content using NLP analysis
     Returns: term_data, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Combine all content for analysis
         combined_content = "\n\n".join([c.get('content', '') for c in competitor_contents if c.get('content')])
@@ -567,52 +569,56 @@ def extract_important_terms(competitor_contents: List[Dict], openai_api_key: str
         if len(combined_content) > 10000:
             combined_content = combined_content[:10000]
         
-        # Use OpenAI to analyze content and extract important terms
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content and extract important terms
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=4000,
+            temperature=0.3,
+            system="You are an SEO expert specializing in content analysis.",
             messages=[
-                {"role": "system", "content": "You are an SEO expert specializing in content analysis."},
-                {"role": "user", "content": f"""
-                Analyze the following content from top-ranking pages and extract:
-                
-                1. Primary terms (most important for this topic, maximum 15 terms)
-                2. Secondary terms (supporting terms for this topic, maximum 20 terms)
-                3. Questions being answered (maximum 10 questions)
-                4. Topics that need to be covered (maximum 10 topics)
-                
-                Format your response as JSON:
-                {{
-                    "primary_terms": [
-                        {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
-                        {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
-                        ...
-                    ],
-                    "secondary_terms": [
-                        {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
-                        {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
-                        ...
-                    ],
-                    "questions": [
-                        "Question 1?",
-                        "Question 2?",
-                        ...
-                    ],
-                    "topics": [
-                        {{"topic": "Topic 1", "description": "This topic covers..."}},
-                        {{"topic": "Topic 2", "description": "This topic covers..."}},
-                        ...
-                    ]
-                }}
-                
-                Content to analyze:
-                {combined_content}
-                """}
-            ],
-            temperature=0.3
+                {
+                    "role": "user", 
+                    "content": f"""
+                    Analyze the following content from top-ranking pages and extract:
+                    
+                    1. Primary terms (most important for this topic, maximum 15 terms)
+                    2. Secondary terms (supporting terms for this topic, maximum 20 terms)
+                    3. Questions being answered (maximum 10 questions)
+                    4. Topics that need to be covered (maximum 10 topics)
+                    
+                    Format your response as JSON:
+                    {{
+                        "primary_terms": [
+                            {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
+                            {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
+                            ...
+                        ],
+                        "secondary_terms": [
+                            {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
+                            {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
+                            ...
+                        ],
+                        "questions": [
+                            "Question 1?",
+                            "Question 2?",
+                            ...
+                        ],
+                        "topics": [
+                            {{"topic": "Topic 1", "description": "This topic covers..."}},
+                            {{"topic": "Topic 2", "description": "This topic covers..."}},
+                            ...
+                        ]
+                    }}
+                    
+                    Content to analyze:
+                    {combined_content}
+                    """
+                }
+            ]
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
@@ -1174,13 +1180,14 @@ def create_content_scoring_brief(keyword: str, term_data: Dict, score_data: Dict
 ###############################################################################
 
 def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], term_data: Dict, 
-                      openai_api_key: str) -> Tuple[str, str, bool]:
+                      anthropic_api_key: str) -> Tuple[str, str, bool]:
     """
     Generate optimized meta title and description for the content
     Returns: meta_title, meta_description, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract H1 and first few sections for context
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
@@ -1196,36 +1203,40 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         primary_terms_str = ", ".join(primary_terms) if primary_terms else top_keywords
         
         # Generate meta tags
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=1000,
+            temperature=0.7,
+            system="You are an SEO specialist who creates optimized meta tags.",
             messages=[
-                {"role": "system", "content": "You are an SEO specialist who creates optimized meta tags."},
-                {"role": "user", "content": f"""
-                Create an SEO-optimized meta title and description for an article about "{keyword}".
-                
-                The article's main heading is: "{h1}"
-                
-                Primary terms to include: {primary_terms_str}
-                Related keywords to consider: {top_keywords}
-                
-                Guidelines:
-                1. Meta title: 50-60 characters, include primary keyword near the beginning
-                2. Meta description: 150-160 characters, include primary and secondary keywords
-                3. Be compelling, accurate, and include a call to action in the description
-                4. Avoid clickbait, use natural language
-                
-                Format your response as JSON:
-                {{
-                    "meta_title": "Your optimized meta title here",
-                    "meta_description": "Your optimized meta description here"
-                }}
-                """}
-            ],
-            temperature=0.7
+                {
+                    "role": "user", 
+                    "content": f"""
+                    Create an SEO-optimized meta title and description for an article about "{keyword}".
+                    
+                    The article's main heading is: "{h1}"
+                    
+                    Primary terms to include: {primary_terms_str}
+                    Related keywords to consider: {top_keywords}
+                    
+                    Guidelines:
+                    1. Meta title: 50-60 characters, include primary keyword near the beginning
+                    2. Meta description: 150-160 characters, include primary and secondary keywords
+                    3. Be compelling, accurate, and include a call to action in the description
+                    4. Avoid clickbait, use natural language
+                    
+                    Format your response as JSON:
+                    {{
+                        "meta_title": "Your optimized meta title here",
+                        "meta_description": "Your optimized meta description here"
+                    }}
+                    """
+                }
+            ]
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -1280,13 +1291,14 @@ def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedd
         logger.error(error_msg)
         return [], False
 
-def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tuple[Dict, bool]:
+def analyze_semantic_structure(contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
     """
     Analyze semantic structure of content to determine optimal hierarchy
     Returns: semantic_analysis, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Combine all content for analysis
         combined_content = "\n\n".join([c.get('content', '') for c in contents if c.get('content')])
@@ -1295,43 +1307,47 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
         if len(combined_content) > 10000:
             combined_content = combined_content[:10000]
         
-        # Use OpenAI to analyze content and suggest headings structure
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content and suggest headings structure
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=4000,
+            temperature=0.3,
+            system="You are an SEO expert specializing in content structure.",
             messages=[
-                {"role": "system", "content": "You are an SEO expert specializing in content structure."},
-                {"role": "user", "content": f"""
-                Analyze the following content from top-ranking pages and recommend an optimal semantic hierarchy 
-                for a new article on this topic. Include:
-                
-                1. A recommended H1 title
-                2. 5-7 H2 section headings
-                3. 2-3 H3 subheadings under each H2
-                
-                Format your response as JSON:
-                {{
-                    "h1": "Recommended H1 Title",
-                    "sections": [
-                        {{
-                            "h2": "First H2 Section",
-                            "subsections": [
-                                {{"h3": "First H3 Subsection"}},
-                                {{"h3": "Second H3 Subsection"}}
-                            ]
-                        }},
-                        ...more sections...
-                    ]
-                }}
-                
-                Content to analyze:
-                {combined_content}
-                """}
-            ],
-            temperature=0.3
+                {
+                    "role": "user", 
+                    "content": f"""
+                    Analyze the following content from top-ranking pages and recommend an optimal semantic hierarchy 
+                    for a new article on this topic. Include:
+                    
+                    1. A recommended H1 title
+                    2. 5-7 H2 section headings
+                    3. 2-3 H3 subheadings under each H2
+                    
+                    Format your response as JSON:
+                    {{
+                        "h1": "Recommended H1 Title",
+                        "sections": [
+                            {{
+                                "h2": "First H2 Section",
+                                "subsections": [
+                                    {{"h3": "First H3 Subsection"}},
+                                    {{"h3": "Second H3 Subsection"}}
+                                ]
+                            }},
+                            ...more sections...
+                        ]
+                    }}
+                    
+                    Content to analyze:
+                    {combined_content}
+                    """
+                }
+            ]
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -1351,7 +1367,7 @@ def analyze_semantic_structure(contents: List[Dict], openai_api_key: str) -> Tup
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
-                     openai_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
+                     anthropic_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
     """
     Generate comprehensive article with natural language flow and balanced keyword usage.
     If guidance_only is True, will generate writing guidance instead of full content.
@@ -1359,7 +1375,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
     Returns: article_content, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Ensure semantic_structure is valid
         if not semantic_structure:
@@ -1452,135 +1469,142 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         if guidance_only:
             # Generate writing guidance for each section
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=4000,
+                temperature=0.5,
+                system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
-                    {"role": "system", "content": "You are an expert SEO content strategist who provides detailed writing guidance."},
-                    {"role": "user", "content": f"""
-                    Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
-                    
-                    For each section (H1, H2s, and H3s), provide:
-                    1. The key points to cover
-                    2. Relevant statistics or data to mention (if applicable)
-                    3. Tone and approach recommendations
-                    4. Specific keywords to include
-                    5. Approximate word count target
-                    
-                    Use this semantic structure:
-                    H1: {h1}
-                    
-                    Sections:
-                    {sections_str}
-                    
-                    Content context:
-                    - Main keyword: {keyword}
-                    - Related keywords to incorporate: {related_kw_str}
-                    - Optimize for these SERP features: {serp_features_str}
-                    - Questions to address: {paa_str}
-                    
-                    Important terms to include:
-                    Primary terms (use these multiple times):
-                    {primary_terms_str}
-                    
-                    Secondary terms (try to include these at least once):
-                    {secondary_terms_str}
-                    
-                    Key topics to cover:
-                    {topics_to_cover_str}
-                    
-                    Format the guidance with proper HTML:
-                    - Main title in <h1> tags
-                    - Section headings in <h2> tags
-                    - Subsection headings in <h3> tags
-                    - Guidance points in <p> tags
-                    - Use <ul>, <li> for bullet points
-                    
-                    Aim for comprehensive guidance that will help a writer create a 1,800-2,200 word article.
-                    """}
-                ],
-                temperature=0.5
+                    {
+                        "role": "user", 
+                        "content": f"""
+                        Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
+                        
+                        For each section (H1, H2s, and H3s), provide:
+                        1. The key points to cover
+                        2. Relevant statistics or data to mention (if applicable)
+                        3. Tone and approach recommendations
+                        4. Specific keywords to include
+                        5. Approximate word count target
+                        
+                        Use this semantic structure:
+                        H1: {h1}
+                        
+                        Sections:
+                        {sections_str}
+                        
+                        Content context:
+                        - Main keyword: {keyword}
+                        - Related keywords to incorporate: {related_kw_str}
+                        - Optimize for these SERP features: {serp_features_str}
+                        - Questions to address: {paa_str}
+                        
+                        Important terms to include:
+                        Primary terms (use these multiple times):
+                        {primary_terms_str}
+                        
+                        Secondary terms (try to include these at least once):
+                        {secondary_terms_str}
+                        
+                        Key topics to cover:
+                        {topics_to_cover_str}
+                        
+                        Format the guidance with proper HTML:
+                        - Main title in <h1> tags
+                        - Section headings in <h2> tags
+                        - Subsection headings in <h3> tags
+                        - Guidance points in <p> tags
+                        - Use <ul>, <li> for bullet points
+                        
+                        Aim for comprehensive guidance that will help a writer create a 1,800-2,200 word article.
+                        """
+                    }
+                ]
             )
             
-            guidance_content = response.choices[0].message.content
+            guidance_content = response.content[0].text
             return guidance_content, True
         else:
             # Generate full article with balanced keyword usage and no redundant questions
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=8000,
+                temperature=0.5,
+                system=f"""You are an expert content writer crafting engaging, informative articles.
+                Write in a natural, conversational style that sounds like an experienced human writer.
+                
+                Key writing principles:
+                1. Write clear, direct content that informs and engages the reader
+                2. Use language that flows naturally without sounding formulaic
+                3. Create content that's substantive and detailed
+                4. Balance keyword usage with natural variation""",
                 messages=[
-                    {"role": "system", "content": f"""You are an expert content writer crafting engaging, informative articles.
-                    Write in a natural, conversational style that sounds like an experienced human writer.
-                    
-                    Key writing principles:
-                    1. Write clear, direct content that informs and engages the reader
-                    2. Use language that flows naturally without sounding formulaic
-                    3. Create content that's substantive and detailed
-                    4. Balance keyword usage with natural variation"""},
-                    
-                    {"role": "user", "content": f"""
-                    Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
-                    
-                    Use this semantic structure:
-                    H1: {h1}
-                    
-                    Sections:
-                    {sections_str}
-                    
-                    Content requirements:
-                    1. Create substantive paragraphs with thorough information (150+ words per section)
-                    2. Include specific examples, practical details, and evidence
-                    3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
-                    4. IMPORTANT DIRECTION ON KEYWORD USAGE:
-                       - Use the exact term "{keyword}" naturally throughout the text
-                       - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
-                       - DO NOT force awkward substitutions or consistently avoid the main term
-                       
-                    5. Write with natural transitions between ideas without relying on transition phrases
-                    6. Vary sentence structure - mix simple, compound, and complex sentences
-                    7. Include the related keywords naturally: {related_kw_str}
-                    8. Address these questions in your content:
-                    {paa_str}
-                    9. Optimize for these SERP features: {serp_features_str}
-                    
-                    Important terms to include:
-                    Primary terms (use these multiple times):
-                    {primary_terms_str}
-                    
-                    Secondary terms (try to include these at least once):
-                    {secondary_terms_str}
-                    
-                    Key topics to cover:
-                    {topics_to_cover_str}
-                    
-                    CRITICAL WRITING INSTRUCTIONS:
-                    1. DO NOT use rhetorical questions in the content, especially:
-                       - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
-                       - DO NOT repeat the heading as a question in the paragraph
-                       - AVOID using questions to transition between topics
-                    
-                    2. Start paragraphs with direct, informative statements instead:
-                       - GOOD: "Arched windows are characterized by their curved tops..."
-                       - BAD: "What makes arched windows special? These windows are characterized..."
-                    
-                    3. Write like an expert explaining a topic clearly and directly:
-                       - Use contractions (don't, you'll, they're) where it sounds natural
-                       - Vary paragraph openings to maintain reader interest
-                       - Connect ideas through logical progression, not forced transitions
-                    
-                    Format the article with proper HTML:
-                    - Main title in <h1> tags
-                    - Section headings in <h2> tags
-                    - Subsection headings in <h3> tags
-                    - Paragraphs in <p> tags
-                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
-                    
-                    Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
-                    """}
-                ],
-                temperature=0.5  # Lower temperature for more controlled output
+                    {
+                        "role": "user", 
+                        "content": f"""
+                        Write a comprehensive article about "{keyword}" that reads naturally and engages the reader.
+                        
+                        Use this semantic structure:
+                        H1: {h1}
+                        
+                        Sections:
+                        {sections_str}
+                        
+                        Content requirements:
+                        1. Create substantive paragraphs with thorough information (150+ words per section)
+                        2. Include specific examples, practical details, and evidence
+                        3. Avoid filler words/phrases like "additionally," "moreover," "for example," "it's worth noting"
+                        4. IMPORTANT DIRECTION ON KEYWORD USAGE:
+                           - Use the exact term "{keyword}" naturally throughout the text
+                           - Occasionally use natural variations (like "these windows" or "such features") when it improves readability
+                           - DO NOT force awkward substitutions or consistently avoid the main term
+                           
+                        5. Write with natural transitions between ideas without relying on transition phrases
+                        6. Vary sentence structure - mix simple, compound, and complex sentences
+                        7. Include the related keywords naturally: {related_kw_str}
+                        8. Address these questions in your content:
+                        {paa_str}
+                        9. Optimize for these SERP features: {serp_features_str}
+                        
+                        Important terms to include:
+                        Primary terms (use these multiple times):
+                        {primary_terms_str}
+                        
+                        Secondary terms (try to include these at least once):
+                        {secondary_terms_str}
+                        
+                        Key topics to cover:
+                        {topics_to_cover_str}
+                        
+                        CRITICAL WRITING INSTRUCTIONS:
+                        1. DO NOT use rhetorical questions in the content, especially:
+                           - NEVER start paragraphs with questions like "So, what are arched windows?" or "Why should you..."
+                           - DO NOT repeat the heading as a question in the paragraph
+                           - AVOID using questions to transition between topics
+                        
+                        2. Start paragraphs with direct, informative statements instead:
+                           - GOOD: "Arched windows are characterized by their curved tops..."
+                           - BAD: "What makes arched windows special? These windows are characterized..."
+                        
+                        3. Write like an expert explaining a topic clearly and directly:
+                           - Use contractions (don't, you'll, they're) where it sounds natural
+                           - Vary paragraph openings to maintain reader interest
+                           - Connect ideas through logical progression, not forced transitions
+                        
+                        Format the article with proper HTML:
+                        - Main title in <h1> tags
+                        - Section headings in <h2> tags
+                        - Subsection headings in <h3> tags
+                        - Paragraphs in <p> tags
+                        - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                        
+                        Aim for 1,800-2,200 words total, ensuring the content is both comprehensive and engaging.
+                        """
+                    }
+                ]
             )
             
-            article_content = response.choices[0].message.content
+            article_content = response.content[0].text
             return article_content, True
     
     except Exception as e:
@@ -1719,12 +1743,16 @@ def verify_semantic_match(anchor_text: str, page_title: str) -> float:
     return similarity
 
 def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
-                                           openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+                                           anthropic_api_key: str, openai_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
     """
     Generate internal links using paragraph-level semantic matching with embeddings
     Returns: article_with_links, links_added, success_status
     """
     try:
+        # Initialize Anthropic client for text generation
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Initialize OpenAI for embeddings
         openai.api_key = openai_api_key
         
         # Calculate max links based on word count
@@ -1749,12 +1777,12 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
             logger.warning("No paragraphs found in the article")
             return article_content, [], False
         
-        # 2. Generate embeddings for each paragraph
+        # 2. Generate embeddings for each paragraph (using OpenAI)
         logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs")
         paragraph_texts = [p['text'] for p in paragraphs]
         
         try:
-            # Get paragraph embeddings
+            # Get paragraph embeddings with OpenAI
             response = openai.Embedding.create(
                 model="text-embedding-3-small",
                 input=paragraph_texts
@@ -1812,33 +1840,37 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 page_title = best_page.get('title', '')
                 para_text = paragraph['text']
                 
-                # Ask GPT to identify a good anchor text from the paragraph that relates to the page title
+                # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
                 try:
-                    anchor_response = openai.ChatCompletion.create(
-                        model="gpt-4o-mini",
+                    anchor_response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=300,
+                        temperature=0.3,
+                        system="You are an expert at identifying semantically relevant anchor text for links.",
                         messages=[
-                            {"role": "system", "content": "You are an expert at identifying semantically relevant anchor text for links."},
-                            {"role": "user", "content": f"""
-                            Find the BEST 2-6 word phrase in this paragraph that would make a semantically relevant anchor text for a page titled "{page_title}".
-                            
-                            The anchor text MUST:
-                            1. Be an EXACT substring in the paragraph (case-sensitive)
-                            2. Contain at least one meaningful keyword from the page title
-                            3. Make sense as clickable text
-                            
-                            Paragraph:
-                            {para_text}
-                            
-                            Page title:
-                            {page_title}
-                            
-                            Return ONLY the exact anchor text phrase, nothing else.
-                            """}
-                        ],
-                        temperature=0.3
+                            {
+                                "role": "user", 
+                                "content": f"""
+                                Find the BEST 2-6 word phrase in this paragraph that would make a semantically relevant anchor text for a page titled "{page_title}".
+                                
+                                The anchor text MUST:
+                                1. Be an EXACT substring in the paragraph (case-sensitive)
+                                2. Contain at least one meaningful keyword from the page title
+                                3. Make sense as clickable text
+                                
+                                Paragraph:
+                                {para_text}
+                                
+                                Page title:
+                                {page_title}
+                                
+                                Return ONLY the exact anchor text phrase, nothing else.
+                                """
+                            }
+                        ]
                     )
                     
-                    anchor_text = anchor_response.choices[0].message.content.strip()
+                    anchor_text = anchor_response.content[0].text.strip()
                     anchor_text = anchor_text.strip('"\'')  # Remove quotes if present
                     
                     # Verify the anchor text exists in the paragraph
@@ -2251,14 +2283,15 @@ def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
         return {}, False
 
 def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
-                        term_data: Dict, score_data: Dict, openai_api_key: str, 
+                        term_data: Dict, score_data: Dict, anthropic_api_key: str, 
                         keyword: str, paa_questions: List[Dict] = None) -> Tuple[Dict, bool]:
     """
     Enhanced content gap analysis that incorporates content scoring data
     Returns: content_gaps, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract existing headings
         existing_headings = [h['text'] for h in existing_content.get('headings', [])]
@@ -2371,89 +2404,93 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
                     description = topic_info.get('description', '')
                     term_data_text += f"- {topic}: {description}\n"
         
-        # Use OpenAI to analyze content gaps with improved prompting that includes content scoring data
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+        # Use Claude to analyze content gaps with improved prompting that includes content scoring data
+        response = client.messages.create(
+            model="claude-3-7-sonnet-20250219",
+            max_tokens=4000,
+            temperature=0.4,
+            system="You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues.",
             messages=[
-                {"role": "system", "content": "You are an expert SEO content analyst specializing in identifying content gaps and semantic relevancy issues."},
-                {"role": "user", "content": f"""
-                Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
-                
-                Existing Content Headings:
-                {json.dumps(existing_headings, indent=2)}
-                
-                Recommended Content Structure Based on Competitors:
-                {json.dumps(recommended_headings, indent=2)}
-                
-                {content_score_text}
-                
-                {term_data_text}
-                
-                {paa_text}
-                
-                Existing Content:
-                {existing_content.get('full_text', '')[:5000]}
-                
-                Competitor Content (Sample):
-                {competitor_text[:5000]}
-                
-                Identify:
-                1. Missing headings/sections that should be added
-                2. Existing headings that should be revised/renamed
-                3. Key topics/points covered by competitors but missing in the existing content
-                4. Content areas that need expansion
-                5. SEMANTIC RELEVANCY ISSUES: Analyze if the content is too broadly focused instead of targeting the specific keyword "{keyword}". Identify sections that need to be refocused.
-                6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
-                7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
-                
-                Format your response as JSON:
-                {{
-                    "missing_headings": [
-                        {{ 
-                            "heading": "Heading Text", 
-                            "level": 2, 
-                            "suggested_content": "Brief description of what this section should cover",
-                            "insert_after": "Name of existing heading to insert after or 'START' for beginning or 'END' for end"
-                        }}
-                    ],
-                    "revised_headings": [
-                        {{ "original": "Original Heading", "suggested": "Improved Heading", "reason": "Reason for change" }}
-                    ],
-                    "content_gaps": [
-                        {{ "topic": "Topic Name", "details": "What's missing about this topic", "suggested_content": "Suggested content to add" }}
-                    ],
-                    "expansion_areas": [
-                        {{ "section": "Section Name", "reason": "Why this needs expansion", "suggested_content": "Additional content to include" }}
-                    ],
-                    "semantic_relevancy_issues": [
-                        {{ 
-                            "section": "Section that's off-target", 
-                            "issue": "Description of how the content is too broad or off-target", 
-                            "recommendation": "How to refocus the content on the keyword '{keyword}'"
-                        }}
-                    ],
-                    "term_usage_issues": [
-                        {{
-                            "term": "Missing or underused term",
-                            "section": "Section where it should be added",
-                            "suggestion": "How to naturally incorporate this term"
-                        }}
-                    ],
-                    "unanswered_questions": [
-                        {{
-                            "question": "People Also Asked question that isn't addressed",
-                            "insert_into_section": "Section where answer should be added",
-                            "suggested_answer": "Brief answer to include in the content"
-                        }}
-                    ]
-                }}
-                """}
-            ],
-            temperature=0.4
+                {
+                    "role": "user", 
+                    "content": f"""
+                    Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
+                    
+                    Existing Content Headings:
+                    {json.dumps(existing_headings, indent=2)}
+                    
+                    Recommended Content Structure Based on Competitors:
+                    {json.dumps(recommended_headings, indent=2)}
+                    
+                    {content_score_text}
+                    
+                    {term_data_text}
+                    
+                    {paa_text}
+                    
+                    Existing Content:
+                    {existing_content.get('full_text', '')[:5000]}
+                    
+                    Competitor Content (Sample):
+                    {competitor_text[:5000]}
+                    
+                    Identify:
+                    1. Missing headings/sections that should be added
+                    2. Existing headings that should be revised/renamed
+                    3. Key topics/points covered by competitors but missing in the existing content
+                    4. Content areas that need expansion
+                    5. SEMANTIC RELEVANCY ISSUES: Analyze if the content is too broadly focused instead of targeting the specific keyword "{keyword}". Identify sections that need to be refocused.
+                    6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
+                    7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
+                    
+                    Format your response as JSON:
+                    {{
+                        "missing_headings": [
+                            {{ 
+                                "heading": "Heading Text", 
+                                "level": 2, 
+                                "suggested_content": "Brief description of what this section should cover",
+                                "insert_after": "Name of existing heading to insert after or 'START' for beginning or 'END' for end"
+                            }}
+                        ],
+                        "revised_headings": [
+                            {{ "original": "Original Heading", "suggested": "Improved Heading", "reason": "Reason for change" }}
+                        ],
+                        "content_gaps": [
+                            {{ "topic": "Topic Name", "details": "What's missing about this topic", "suggested_content": "Suggested content to add" }}
+                        ],
+                        "expansion_areas": [
+                            {{ "section": "Section Name", "reason": "Why this needs expansion", "suggested_content": "Additional content to include" }}
+                        ],
+                        "semantic_relevancy_issues": [
+                            {{ 
+                                "section": "Section that's off-target", 
+                                "issue": "Description of how the content is too broad or off-target", 
+                                "recommendation": "How to refocus the content on the keyword '{keyword}'"
+                            }}
+                        ],
+                        "term_usage_issues": [
+                            {{
+                                "term": "Missing or underused term",
+                                "section": "Section where it should be added",
+                                "suggestion": "How to naturally incorporate this term"
+                            }}
+                        ],
+                        "unanswered_questions": [
+                            {{
+                                "question": "People Also Asked question that isn't addressed",
+                                "insert_into_section": "Section where answer should be added",
+                                "suggested_answer": "Brief answer to include in the content"
+                            }}
+                        ]
+                    }}
+                    """
+                }
+            ]
         )
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
+        content = response.content[0].text
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
@@ -2776,13 +2813,14 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
                               keyword: str, paa_questions: List[Dict], term_data: Dict,
-                              openai_api_key: str, target_word_count: int = 1500) -> Tuple[str, str, bool]:
+                              anthropic_api_key: str, target_word_count: int = 1500) -> Tuple[str, str, bool]:
     """
     Enhanced article generation that incorporates term data
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
-        openai.api_key = openai_api_key
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
         
         # Extract existing content structure
         original_content = existing_content.get('full_text', '')
@@ -2868,25 +2906,29 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 break
                 
             # Find most relevant original heading for this section
-            matching_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            matching_response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=300,
+                temperature=0.1,
+                system="You are an expert at matching content sections.",
                 messages=[
-                    {"role": "system", "content": "You are an expert at matching content sections."},
-                    {"role": "user", "content": f"""
-                        Find the most relevant heading from the original content that matches this new section:
-                        
-                        New section: {h2}
-                        
-                        Original headings to choose from:
-                        {json.dumps([h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings], indent=2)}
-                        
-                        Return ONLY the exact text of the best matching original heading, or "NONE" if no good match exists.
-                    """}
-                ],
-                temperature=0.1
+                    {
+                        "role": "user", 
+                        "content": f"""
+                            Find the most relevant heading from the original content that matches this new section:
+                            
+                            New section: {h2}
+                            
+                            Original headings to choose from:
+                            {json.dumps([h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings], indent=2)}
+                            
+                            Return ONLY the exact text of the best matching original heading, or "NONE" if no good match exists.
+                        """
+                    }
+                ]
             )
             
-            matching_heading = matching_response.choices[0].message.content.strip()
+            matching_heading = matching_response.content[0].text.strip()
             optimized_sections.append(f"<h2>{h2}</h2>")
             current_word_count += len(h2.split())
             
@@ -2902,36 +2944,40 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new section with controlled length
-                section_content_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
+                section_content_response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=1500,
+                    temperature=0.4,
+                    system="You are an expert content writer focused on concise, informative content.",
                     messages=[
-                        {"role": "system", "content": "You are an expert content writer focused on concise, informative content."},
-                        {"role": "user", "content": f"""
-                            Write content for this section about "{keyword}": {h2}
-                            
-                            Requirements:
-                            1. Include relevant information based on competitor content
-                            2. Improve semantic relevance to the keyword
-                            3. STRICTLY limit to {section_word_limit} words
-                            4. Create substantive, non-fluff content
-                            
-                            Important terms to include:
-                            Primary terms (use these if relevant):
-                            {primary_terms_str}
-                            
-                            Secondary terms (try to include these if relevant):
-                            {secondary_terms_str}
-                            
-                            Key topics to cover (if relevant to this section):
-                            {topics_to_cover_str}
-                            
-                            Format with proper HTML paragraph tags.
-                        """}
-                    ],
-                    temperature=0.4
+                        {
+                            "role": "user", 
+                            "content": f"""
+                                Write content for this section about "{keyword}": {h2}
+                                
+                                Requirements:
+                                1. Include relevant information based on competitor content
+                                2. Improve semantic relevance to the keyword
+                                3. STRICTLY limit to {section_word_limit} words
+                                4. Create substantive, non-fluff content
+                                
+                                Important terms to include:
+                                Primary terms (use these if relevant):
+                                {primary_terms_str}
+                                
+                                Secondary terms (try to include these if relevant):
+                                {secondary_terms_str}
+                                
+                                Key topics to cover (if relevant to this section):
+                                {topics_to_cover_str}
+                                
+                                Format with proper HTML paragraph tags.
+                            """
+                        }
+                    ]
                 )
                 
-                new_section_content = section_content_response.choices[0].message.content
+                new_section_content = section_content_response.content[0].text
                 optimized_sections.append(new_section_content)
                 
                 # Estimate added word count
@@ -2948,43 +2994,47 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 original_section_content = section_content.get(matching_heading, '')
                 
                 # Enhance this section with strict word count limit
-                enhanced_section_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
+                enhanced_section_response = client.messages.create(
+                    model="claude-3-7-sonnet-20250219",
+                    max_tokens=1500,
+                    temperature=0.3,
+                    system="You are an expert at enhancing content while preserving value and maintaining conciseness.",
                     messages=[
-                        {"role": "system", "content": "You are an expert at enhancing content while preserving value and maintaining conciseness."},
-                        {"role": "user", "content": f"""
-                            Enhance this original content section while PRESERVING its value.
-                            
-                            Original heading: {matching_heading}
-                            New heading: {h2}
-                            
-                            Original content:
-                            {original_section_content}
-                            
-                            Instructions:
-                            1. Keep all valuable information from the original content
-                            2. Preserve specific examples, data points, and unique insights
-                            3. Improve semantic relevance to keyword "{keyword}"
-                            4. Fix any unclear writing but maintain the original voice
-                            5. STRICTLY limit to {section_word_limit} words
-                            
-                            Important terms to include or increase usage of:
-                            Primary terms (use these if relevant):
-                            {primary_terms_str}
-                            
-                            Secondary terms (try to include these if relevant):
-                            {secondary_terms_str}
-                            
-                            Format with proper HTML paragraph tags.
-                            
-                            Also provide a single sentence summary of the key improvements you made:
-                            IMPROVEMENTS: [single sentence summary of key improvements]
-                        """}
-                    ],
-                    temperature=0.3
+                        {
+                            "role": "user", 
+                            "content": f"""
+                                Enhance this original content section while PRESERVING its value.
+                                
+                                Original heading: {matching_heading}
+                                New heading: {h2}
+                                
+                                Original content:
+                                {original_section_content}
+                                
+                                Instructions:
+                                1. Keep all valuable information from the original content
+                                2. Preserve specific examples, data points, and unique insights
+                                3. Improve semantic relevance to keyword "{keyword}"
+                                4. Fix any unclear writing but maintain the original voice
+                                5. STRICTLY limit to {section_word_limit} words
+                                
+                                Important terms to include or increase usage of:
+                                Primary terms (use these if relevant):
+                                {primary_terms_str}
+                                
+                                Secondary terms (try to include these if relevant):
+                                {secondary_terms_str}
+                                
+                                Format with proper HTML paragraph tags.
+                                
+                                Also provide a single sentence summary of the key improvements you made:
+                                IMPROVEMENTS: [single sentence summary of key improvements]
+                            """
+                        }
+                    ]
                 )
                 
-                enhanced_response = enhanced_section_response.choices[0].message.content
+                enhanced_response = enhanced_section_response.content[0].text
                 
                 # Extract improvements summary
                 improvements_summary = ""
@@ -3025,29 +3075,33 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     current_word_count += len(h3.split())
                     
                     # Generate content for this subsection with strict word limit
-                    subsection_content_response = openai.ChatCompletion.create(
-                        model="gpt-4o-mini",
+                    subsection_content_response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=1000,
+                        temperature=0.4,
+                        system="You are an expert content writer focused on brevity and impact.",
                         messages=[
-                            {"role": "system", "content": "You are an expert content writer focused on brevity and impact."},
-                            {"role": "user", "content": f"""
-                                Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
-                                
-                                Requirements:
-                                1. Include ONLY the most essential information
-                                2. Improve semantic relevance to keyword
-                                3. STRICTLY limit to {subsection_word_limit} words total
-                                4. Be substantive and informative despite brevity
-                                
-                                Important terms to include if relevant:
-                                Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
-                                
-                                Format with proper HTML paragraph tags.
-                            """}
-                        ],
-                        temperature=0.4
+                            {
+                                "role": "user", 
+                                "content": f"""
+                                    Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
+                                    
+                                    Requirements:
+                                    1. Include ONLY the most essential information
+                                    2. Improve semantic relevance to keyword
+                                    3. STRICTLY limit to {subsection_word_limit} words total
+                                    4. Be substantive and informative despite brevity
+                                    
+                                    Important terms to include if relevant:
+                                    Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                                    
+                                    Format with proper HTML paragraph tags.
+                                """
+                            }
+                        ]
                     )
                     
-                    subsection_content = subsection_content_response.choices[0].message.content
+                    subsection_content = subsection_content_response.content[0].text
                     optimized_sections.append(subsection_content)
                     
                     # Estimate added word count
@@ -3063,27 +3117,31 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             conclusion_word_limit = target_word_count - current_word_count
             
-            conclusion_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+            conclusion_response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=1000,
+                temperature=0.4,
+                system="You are an expert at writing concise, impactful conclusions.",
                 messages=[
-                    {"role": "system", "content": "You are an expert at writing concise, impactful conclusions."},
-                    {"role": "user", "content": f"""
-                        Write a brief conclusion for an article about "{keyword}".
-                        
-                        Requirements:
-                        1. Summarize key points
-                        2. Include a call to action
-                        3. Reinforce the keyword relevance
-                        4. Include at least 2 primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
-                        5. STRICTLY limit to {conclusion_word_limit} words
-                        
-                        Format with proper HTML paragraph tags.
-                    """}
-                ],
-                temperature=0.4
+                    {
+                        "role": "user", 
+                        "content": f"""
+                            Write a brief conclusion for an article about "{keyword}".
+                            
+                            Requirements:
+                            1. Summarize key points
+                            2. Include a call to action
+                            3. Reinforce the keyword relevance
+                            4. Include at least 2 primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                            5. STRICTLY limit to {conclusion_word_limit} words
+                            
+                            Format with proper HTML paragraph tags.
+                        """
+                    }
+                ]
             )
             
-            conclusion_content = conclusion_response.choices[0].message.content
+            conclusion_content = conclusion_response.content[0].text
             optimized_sections.append(conclusion_content)
         
         # Create final document with change summary
@@ -3258,6 +3316,9 @@ def main():
     dataforseo_password = st.sidebar.text_input("DataForSEO API Password", type="password")
     
     openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+
+    anthropic_api_key = st.sidebar.text_input("Anthropic API Key", type="password")
+    anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
     
     # Initialize session state
     if 'results' not in st.session_state:
@@ -3516,7 +3577,7 @@ def main():
                             st.session_state.results.get('serp_features', []),
                             st.session_state.results.get('paa_questions', []),
                             term_data,
-                            openai_api_key,
+                            anthropic_api_key,  # Change to Anthropic API key 
                             guidance_only
                         )
                         
@@ -3695,9 +3756,13 @@ def main():
                                 
                                 # Generate internal links (updated function)
                                 article_with_links, links_added, links_success = generate_internal_links_with_embeddings(
-                                    article_content, pages_with_embeddings, openai_api_key, word_count
+                                    article_content, 
+                                    pages_with_embeddings, 
+                                    anthropic_api_key,  # Pass Anthropic key
+                                    openai_api_key,    # Also pass OpenAI key for embeddings
+                                    word_count
                                 )
-                                
+                                                                
                                 if links_success:
                                     st.session_state.results['article_with_links'] = article_with_links
                                     st.session_state.results['internal_links'] = links_added
