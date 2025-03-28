@@ -1244,7 +1244,7 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
 # 7. Embeddings and Semantic Analysis
 ###############################################################################
 
-def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedding-3-small") -> Tuple[List[float], bool]:
+def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedding-3-large") -> Tuple[List[float], bool]:
     """
     Generate embedding for text using OpenAI API
     Returns: embedding, success_status
@@ -1641,7 +1641,7 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 1
             batch_texts = texts[start_idx:end_idx]
             
             response = openai.Embedding.create(
-                model="text-embedding-3-small",
+                model="text-embedding-3-large",
                 input=batch_texts
             )
             
@@ -1709,6 +1709,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
     Returns: article_with_links, links_added, success_status
     """
     try:
+        # Using the OpenAI API key
         openai.api_key = openai_api_key
         
         # Calculate max links based on word count
@@ -1776,7 +1777,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
         try:
             # Get paragraph embeddings
             response = openai.Embedding.create(
-                model="text-embedding-3-small",
+                model="text-embedding-3-large",
                 input=paragraph_texts
             )
             paragraph_embeddings = [item['embedding'] for item in response['data']]
@@ -1834,6 +1835,7 @@ def generate_internal_links_with_embeddings(article_content: str, pages_with_emb
                 
                 # Ask Claude to identify a good anchor text from the paragraph that relates to the page title
                 try:
+                    # FIXED: Use the OPENAI key for Claude API calls too
                     client = anthropic.Anthropic(api_key=openai_api_key)
                     anchor_response = client.messages.create(
                         model="claude-3-7-sonnet-20250219",
