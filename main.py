@@ -4529,9 +4529,11 @@ def main():
                             if missing_primary:
                                 st.markdown("#### Missing Primary Terms")
                                 for term in missing_primary:
+                                    # Pre-format the importance value
+                                    importance_formatted = f"{term.get('importance', 0):.2f}"
                                     st.markdown(f"""
-                                    <div>
-                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f} - Recommended usage: {term.get('recommended_usage', 1)}
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Importance: {importance_formatted} - Recommended usage: {term.get('recommended_usage', 1)}
                                     </div>
                                     """, unsafe_allow_html=True)
                             else:
@@ -4553,9 +4555,11 @@ def main():
                             if missing_secondary:
                                 st.markdown("#### Missing Secondary Terms")
                                 for term in missing_secondary:
+                                    # Pre-format the importance value
+                                    importance_formatted = f"{term.get('importance', 0):.2f}"
                                     st.markdown(f"""
                                     <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f0f0f0; border-left: 3px solid #808080; border-radius: 3px;">
-                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f}
+                                        <strong>{term.get('term')}</strong> - Importance: {importance_formatted}
                                     </div>
                                     """, unsafe_allow_html=True)
                         
