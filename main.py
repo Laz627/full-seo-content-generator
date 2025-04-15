@@ -486,7 +486,8 @@ def scrape_webpage(url: str) -> Tuple[Optional[str], str]:
 
     # Attempt 1: Trafilatura (often best for article content)
     try:
-        downloaded = trafilatura.fetch_url(url, timeout=SCRAPE_TIMEOUT)
+        # CORRECTED LINE: Removed the timeout argument from fetch_url
+        downloaded = trafilatura.fetch_url(url) 
         if downloaded:
             # Extract main content, favoring text content, include tables
             content = trafilatura.extract(
@@ -503,6 +504,12 @@ def scrape_webpage(url: str) -> Tuple[Optional[str], str]:
                  logger.warning(f"Trafilatura extracted minimal content from {url}. Trying fallback.")
         else:
             logger.warning(f"Trafilatura failed to download {url}. Trying fallback.")
+    except TypeError as te:
+        # Catching the specific error observed by the user for better logging
+        if 'unexpected keyword argument \'timeout\'' in str(te):
+             logger.error(f"Trafilatura fetch_url called with incorrect 'timeout' argument for {url}. This indicates an issue in the script code. Trying fallback.", exc_info=False) # Don't need full traceback for this known issue
+        else:
+             logger.warning(f"Trafilatura failed for {url} with TypeError: {te}. Trying fallback.")
     except Exception as e:
         logger.warning(f"Trafilatura failed for {url}: {e}. Trying fallback.")
 
@@ -514,26 +521,39 @@ def scrape_webpage(url: str) -> Tuple[Optional[str], str]:
             'Accept-Language': 'en-US,en;q=0.5',
             'Referer': 'https://www.google.com/'
         }
-        response = requests.get(url, headers=headers, timeout=SCRAPE_TIMEOUT)
+        # Use the SCRAPE_TIMEOUT constant for the requests call
+        response = requests.get(url, headers=headers, timeout=SCRAPE_TIMEOUT) 
         response.raise_for_status() # Check for HTTP errors
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
         # Remove non-content elements more aggressively
-        for element in soup(["script", "style", "header", "footer", "nav", "aside", "form", "noscript", "iframe", "button", "input", "select", "textarea", ".sidebar", ".ad", ".advertisement", ".popup", ".modal", ".cookie-banner", ".social-share"]):
+        # Define selectors and tags to remove
+        elements_to_remove = [
+            "script", "style", "header", "footer", "nav", "aside", "form", 
+            "noscript", "iframe", "button", "input", "select", "textarea", 
+            ".sidebar", ".ad", ".advertisement", ".popup", ".modal", 
+            ".cookie-banner", ".social-share", "[aria-hidden='true']", 
+            "#comments", ".comments-area" 
+        ]
+        
+        for element_selector in elements_to_remove:
              try:
-                 if isinstance(element, str): # Check if it's a selector
-                      for el in soup.select(element):
-                          el.decompose()
+                 # Check if it looks like a CSS selector (starts with . or #, or contains > [] etc.)
+                 if re.match(r'^[.#\[\]>]', element_selector) or any(c in element_selector for c in '>+~ '):
+                      elements = soup.select(element_selector)
                  else: # Assume it's a tag name
-                     for el in soup.find_all(element):
-                          el.decompose()
+                      elements = soup.find_all(element_selector)
+                 
+                 for el in elements:
+                      el.decompose()
              except Exception as decompose_error:
-                  logger.debug(f"Could not decompose element {element}: {decompose_error}")
+                  # More specific error logging can be helpful
+                  logger.debug(f"Could not decompose element matching '{element_selector}': {decompose_error}")
 
 
         # Try finding common main content containers
-        main_content_selectors = ['main', 'article', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#content', '#main', '.content']
+        main_content_selectors = ['main', 'article', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#content', '#main', '.content', '.body-content', '.article-body']
         main_div = None
         for selector in main_content_selectors:
              try:
@@ -545,6 +565,7 @@ def scrape_webpage(url: str) -> Tuple[Optional[str], str]:
                  logger.debug(f"Selector error for {selector}: {selector_error}")
 
         if main_div:
+             # If main div found, get text only from within it
              text = main_div.get_text(separator='\n', strip=True)
         else:
              # Fallback to body if no main container found
@@ -564,27 +585,30 @@ def scrape_webpage(url: str) -> Tuple[Optional[str], str]:
             logger.info(f"Successfully scraped content using BeautifulSoup fallback for {url} ({len(cleaned_text)} chars)")
             return cleaned_text, "Success (BeautifulSoup Fallback)"
         else:
-            logger.warning(f"BeautifulSoup fallback extracted minimal content from {url}")
-            return None, "Scraping Failed (Fallback - No Content)"
+            logger.warning(f"BeautifulSoup fallback extracted minimal content from {url}. Length: {len(cleaned_text)}")
+            return None, "Scraping Failed (Fallback - No Meaningful Content)"
 
 
     except requests.exceptions.HTTPError as http_err:
-         if http_err.response.status_code == 403:
+         status_code = http_err.response.status_code
+         if status_code == 403:
              status_message = "Scraping Failed (403 Forbidden)"
-             logger.warning(f"{status_message} for URL: {url}")
-         elif http_err.response.status_code == 404:
+         elif status_code == 404:
              status_message = "Scraping Failed (404 Not Found)"
-             logger.warning(f"{status_message} for URL: {url}")
          else:
-             status_message = f"Scraping Failed (HTTP {http_err.response.status_code})"
-             logger.warning(f"{status_message} for URL: {url} - {http_err}")
+             status_message = f"Scraping Failed (HTTP {status_code})"
+         logger.warning(f"{status_message} for URL: {url} - {http_err}")
          return None, status_message
+    except requests.exceptions.Timeout:
+        status_message = f"Scraping Failed (Timeout after {SCRAPE_TIMEOUT}s)"
+        logger.warning(f"{status_message} for URL: {url}")
+        return None, status_message
     except requests.exceptions.RequestException as req_err:
         status_message = f"Scraping Failed (Request Exception: {req_err})"
-        logger.error(status_message, exc_info=True)
+        logger.error(f"{status_message} for URL: {url}", exc_info=False) # No need for full trace usually
         return None, status_message
     except Exception as e:
-        status_message = f"Scraping Failed (Unexpected Error: {e})"
+        status_message = f"Scraping Failed (Unexpected Error in Fallback: {e})"
         logger.error(status_message, exc_info=True)
         return None, status_message
 
