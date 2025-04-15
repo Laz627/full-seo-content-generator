@@ -1503,7 +1503,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     {topics_str}
                     
                     WRITING STYLE GUIDANCE:
-                    - Be extremely concise - the final article should be 1,200-1,500 words MAXIMUM
+                    - Be more concise - the final article should be 1,500-2,000 words MAXIMUM
                     - Use a conversational, engaging tone
                     - Vary sentence structure to maintain reader interest
                     - Use transitional phrases between paragraphs and sections
@@ -1515,7 +1515,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
                     
-                    Keep the guidance brief and practical, focused on creating a concise 1,200-1,500 word article.
+                    Keep the guidance brief and practical, focused on creating a concise 1,500-2,000 word article.
                     """}
                 ],
                 temperature=0.5
@@ -1549,19 +1549,19 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     {sections_str}
                     
                     ⚠️ CRITICAL WORD COUNT LIMIT ⚠️
-                    This article MUST be between 1,200-1,500 words TOTAL. This is ABSOLUTELY MANDATORY.
-                    Do not exceed 1,500 words under any circumstances.
+                    This article MUST be between 1,500-2,000 words TOTAL. This is ABSOLUTELY MANDATORY.
+                    Do not exceed 2,000 words under any circumstances.
                     
                     SECTION LENGTH GUIDELINES:
                     - Introduction: 100-150 words
                     - Each H2 section: 100-150 words TOTAL before any H3 subsections
-                    - Each H3 subsection: 80-100 words MAXIMUM
+                    - Each H3 subsection: 100-150 words MAXIMUM
                     - Conclusion: 80-100 words
                     
                     WRITING APPROACH:
-                    - Be extremely concise but informative
+                    - Be concise but informative
                     - Write in a conversational, flowing style
-                    - Use short paragraphs (2-3 sentences)
+                    - Use short paragraphs (3-5 sentences)
                     - Create smooth transitions between ideas
                     - Vary sentence structure
                     
@@ -1603,7 +1603,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                         system="You are an expert editor who condenses content while preserving key information.",
                         messages=[
                             {"role": "user", "content": f"""
-                            This article is too long (approximately {words} words). Edit it to be between 1,200-1,500 words MAXIMUM while preserving all key information and the HTML structure.
+                            This article is too long (approximately {words} words). Edit it to be between 1,500-2,000 words MAXIMUM while preserving all key information and the HTML structure.
                             
                             Focus on:
                             1. Removing redundant phrases
