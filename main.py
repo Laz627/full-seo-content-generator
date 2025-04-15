@@ -659,7 +659,7 @@ def extract_headings(url: str) -> Tuple[Optional[Dict[str, List[str]]], str]:
 
 def generate_embedding(text: str, openai_api_key: str, model: str = EMBEDDING_MODEL_OPENAI) -> Tuple[Optional[List[float]], str]:
     """
-    Generate text embedding using OpenAI API.
+    Generate text embedding using OpenAI API (v1.x.x syntax).
     Returns: embedding list or None, status message.
     """
     if not text:
@@ -674,16 +674,16 @@ def generate_embedding(text: str, openai_api_key: str, model: str = EMBEDDING_MO
     if len(text) > max_input_chars:
          logger.warning(f"Input text truncated to {max_input_chars} chars for embedding.")
 
-
     try:
-        # Initialize OpenAI client (consider initializing once if possible)
-        client = openai.OpenAI(api_key=openai_api_key)
+        # Initialize OpenAI client (v1.x.x)
+        client = openai.OpenAI(api_key=openai_api_key) # Correct Initialization
 
+        # Use the client object to call the embeddings endpoint (v1.x.x)
         response = client.embeddings.create(
             model=model,
             input=[truncated_text] # API expects a list of strings
         )
-        
+
         if response.data and len(response.data) > 0:
              embedding = response.data[0].embedding
              # Verify expected dimension based on model
@@ -708,17 +708,6 @@ def generate_embedding(text: str, openai_api_key: str, model: str = EMBEDDING_MO
         error_msg = f"Unexpected error generating embedding: {e}"
         logger.error(error_msg, exc_info=True)
         return None, error_msg
-
-def get_anthropic_client(api_key: str) -> Optional[anthropic.Anthropic]:
-     """Initializes and returns an Anthropic client."""
-     if not api_key:
-         logger.error("Anthropic API key is missing.")
-         return None
-     try:
-         return anthropic.Anthropic(api_key=api_key)
-     except Exception as e:
-         logger.error(f"Failed to initialize Anthropic client: {e}")
-         return None
 
 def analyze_semantic_structure(competitor_contents: List[Dict], anthropic_api_key: str) -> Tuple[Optional[Dict], str]:
     """
@@ -1878,33 +1867,37 @@ def parse_site_pages_spreadsheet(uploaded_file) -> Tuple[Optional[List[Dict]], s
         return None, error_msg
 
 def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = INTERNAL_LINK_BATCH_SIZE) -> Tuple[Optional[List[Dict]], str]:
-    """Generate embeddings for site pages using OpenAI, processing in batches."""
+    """Generate embeddings for site pages using OpenAI (v1.x.x syntax), processing in batches."""
     if not pages:
         return [], "No pages provided for embedding."
     if not openai_api_key:
         return None, "OpenAI API key is missing."
 
-    client = openai.OpenAI(api_key=openai_api_key)
-    
+    # Initialize OpenAI client (v1.x.x)
+    client = openai.OpenAI(api_key=openai_api_key) # Correct Initialization
+
     texts_to_embed = []
     page_indices = [] # Track original index for mapping back
     for i, page in enumerate(pages):
          # Combine key fields for semantic meaning
          text = f"Title: {page.get('title', '')}\nURL: {page.get('url', '')}\nDescription: {page.get('description', '')}"
-         texts_to_embed.append(text)
+         # Basic text cleaning might be useful here if descriptions are noisy
+         clean_text = re.sub(r'\s+', ' ', text).strip()
+         texts_to_embed.append(clean_text)
          page_indices.append(i)
 
     all_embeddings = [None] * len(pages) # Initialize list to store embeddings
     model_used = EMBEDDING_MODEL_OPENAI
-    
+
     logger.info(f"Generating embeddings for {len(texts_to_embed)} pages using {model_used} in batches of {batch_size}...")
-    
+
     try:
         for i in range(0, len(texts_to_embed), batch_size):
             batch_texts = texts_to_embed[i : i + batch_size]
             batch_indices = page_indices[i : i + batch_size]
-            
+
             logger.debug(f"Processing batch {i//batch_size + 1}...")
+            # Use the client object to call the embeddings endpoint (v1.x.x)
             response = client.embeddings.create(
                 model=model_used,
                 input=batch_texts
@@ -1934,7 +1927,7 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = I
 
         if successful_embeddings == 0:
              return None, "Embedding generation failed for all pages."
-             
+
         logger.info(f"Successfully generated embeddings for {successful_embeddings}/{len(pages)} pages.")
         return pages_with_embeddings, "Success"
 
@@ -1948,11 +1941,11 @@ def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = I
         return None, error_msg
 
 
-def generate_internal_links_with_embeddings(article_html: str, pages_with_embeddings: List[Dict], 
+def generate_internal_links_with_embeddings(article_html: str, pages_with_embeddings: List[Dict],
                                            openai_api_key: str, # Keep openai key for consistency
                                            word_count: int) -> Tuple[str, List[Dict], str]:
     """
-    Identifies internal linking opportunities using semantic similarity between article paragraphs and site pages.
+    Identifies internal linking opportunities using semantic similarity between article paragraphs and site pages (OpenAI v1.x.x syntax).
     Uses simple keyword matching for anchor text selection to avoid extra LLM calls.
     Returns: article HTML with links, list of added links, status message.
     """
@@ -1960,8 +1953,9 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
         return article_html, [], "Missing article content or site pages for linking."
     if not openai_api_key:
         return article_html, [], "OpenAI API key needed for paragraph embeddings."
-        
-    client = openai.OpenAI(api_key=openai_api_key)
+
+    # Initialize OpenAI client (v1.x.x)
+    client = openai.OpenAI(api_key=openai_api_key) # Correct Initialization
 
     # Calculate target number of links
     max_links = min(15, max(INTERNAL_LINK_MIN_COUNT, int(word_count / 1000) * INTERNAL_LINK_MAX_COUNT_FACTOR))
@@ -1977,7 +1971,7 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
                 'text': para_text,
                 'html_tag': p_tag # Keep reference to the tag object
             })
-            
+
     if not paragraphs:
         logger.warning("No suitable paragraphs found in the article for internal linking.")
         return article_html, [], "Success (No paragraphs found)"
@@ -1985,12 +1979,12 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
     # 2. Generate Embeddings for Paragraphs
     paragraph_texts = [p['text'] for p in paragraphs]
     paragraph_embeddings = []
-    
+
     # Determine embedding model based on page embeddings
     first_page_embedding = next((p['embedding'] for p in pages_with_embeddings if p.get('embedding')), None)
     if not first_page_embedding:
          return article_html, [], "Error: No valid embeddings found in site pages data."
-         
+
     embedding_dim = len(first_page_embedding)
     if embedding_dim == EMBEDDING_DIM_LARGE:
         para_embedding_model = "text-embedding-3-large"
@@ -2007,6 +2001,7 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
          batch_size = INTERNAL_LINK_BATCH_SIZE * 2 # Larger batch for paragraphs
          for i in range(0, len(paragraph_texts), batch_size):
              batch_texts = paragraph_texts[i : i + batch_size]
+             # Use the client object to call the embeddings endpoint (v1.x.x)
              response = client.embeddings.create(model=para_embedding_model, input=batch_texts)
              if response.data:
                  paragraph_embeddings.extend([item.embedding for item in response.data])
@@ -2027,13 +2022,13 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
         error_msg = f"Failed to generate paragraph embeddings: {e}"
         logger.error(error_msg, exc_info=True)
         return article_html, [], f"Error: {error_msg}"
-        
+
     # Filter out paragraphs where embedding failed
     paragraphs_with_embeddings = [p for p in paragraphs if p.get('embedding')]
     if not paragraphs_with_embeddings:
          return article_html, [], "Error: Embedding generation failed for all paragraphs."
 
-    # 3. Find Best Page Match for Each Paragraph
+    # 3. Find Best Page Match for Each Paragraph (calculation logic remains the same)
     potential_links = []
     valid_pages = [p for p in pages_with_embeddings if p.get('embedding')]
 
@@ -2067,11 +2062,11 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
     # Sort potential links by score (highest similarity first)
     potential_links.sort(key=lambda x: x['similarity_score'], reverse=True)
 
-    # 4. Select Links and Identify Anchor Text
+    # 4. Select Links and Identify Anchor Text (logic remains the same)
     links_added = []
     used_paragraphs = set() # Track index in original paragraphs list
     used_pages = set()
-    
+
     # Helper to find paragraph index in the original list
     original_para_indices = {id(p['html_tag']): i for i, p in enumerate(paragraphs)}
 
@@ -2083,16 +2078,16 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
         para_text = paragraph_obj['text']
         page_url = link_info['page_url']
         page_title = link_info['page_title']
-        
+
         # Find original index using the tag object's ID
         original_para_idx = original_para_indices.get(id(paragraph_obj['html_tag']))
-        
+
         if original_para_idx is None or original_para_idx in used_paragraphs or page_url in used_pages:
             continue # Skip if paragraph already used, page linked, or index not found
 
         # Simple Anchor Text Strategy: Match page title keywords
         title_keywords = set(re.findall(r'\b\w{4,}\b', page_title.lower())) # Keywords >= 4 chars
-        
+
         best_anchor = ""
         max_matched_keywords = 0
 
@@ -2137,30 +2132,29 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
         else:
              logger.debug(f"Could not find suitable anchor text for page '{page_title}' in paragraph {original_para_idx}.")
 
-
-    # 5. Apply Links to Article HTML (using the stored tag objects)
+    # 5. Apply Links to Article HTML (logic remains the same)
     if not links_added:
         logger.info("No internal links added based on similarity and anchor text criteria.")
         return article_html, [], "Success (No links added)"
 
     logger.info(f"Attempting to add {len(links_added)} internal links.")
-    
+
     modified_count = 0
     # We modify the soup *in place* by accessing the original paragraph tags
     for link in links_added:
         p_tag = link['paragraph_object']['html_tag']
         anchor = link['anchor_text']
         url = link['page_url']
-        
+
         # Use regex to replace only the first occurrence of the anchor within the tag's text content
         try:
              # Get current text content of the paragraph tag
              current_text = p_tag.decode_contents()
-             
+
              # Case-insensitive replacement of the first match
              pattern = re.compile(r'(\b' + re.escape(anchor) + r'\b)', re.IGNORECASE)
              new_html_content, num_subs = pattern.subn(f'<a href="{url}" title="{link["page_title"]}">{r"\1"}</a>', current_text, count=1)
-             
+
              if num_subs > 0:
                  # Clear the original tag content and append the modified HTML
                  p_tag.clear()
@@ -2172,7 +2166,9 @@ def generate_internal_links_with_embeddings(article_html: str, pages_with_embedd
                  if context_match:
                      start = max(0, context_match.start() - 30)
                      end = min(len(link['paragraph_object']['text']), context_match.end() + 30)
-                     context = f"...{link['paragraph_object']['text'][start:context_match.start()]}<mark>[{context_match.group(0)}]</mark>{link['paragraph_object']['text'][context_match.end():end]}..."
+                     # Use HTML entities for less than/greater than to avoid issues in markdown display
+                     safe_para_text = link['paragraph_object']['text'].replace('<', '<').replace('>', '>')
+                     context = f"...{safe_para_text[start:context_match.start()]}<mark>[{context_match.group(0)}]</mark>{safe_para_text[context_match.end():end]}..."
                      link['context'] = context
                  else: link['context'] = "Context unavailable"
 
