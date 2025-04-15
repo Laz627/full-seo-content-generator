@@ -3154,7 +3154,8 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                               keyword: str, paa_questions: List[Dict], term_data: Dict,
                               anthropic_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
     """
-    Enhanced article generation that incorporates term data using Claude 3.7 Sonnet
+    Strategic article optimization that preserves 90% of existing content while making
+    targeted improvements for SEO performance.
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
@@ -3177,24 +3178,15 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         if len(combined_competitor_content) > 15000:
             combined_competitor_content = combined_competitor_content[:15000]
         
-        # Format required content structure with content expectations
-        required_structure = []
-        if 'h1' in semantic_structure:
-            h1 = semantic_structure.get('h1')
-            required_structure.append(f"H1: {h1} [FOLLOWED BY 150-200 WORD INTRODUCTION]")
-        
-        for section in semantic_structure.get('sections', []):
-            if section and isinstance(section, dict) and 'h2' in section:
-                h2 = section.get('h2')
-                required_structure.append(f"H2: {h2} [REQUIRES 150-200 WORDS OF CONTENT DIRECTLY UNDER THIS H2 HEADING]")
-                
-                for subsection in section.get('subsections', []):
-                    if subsection and isinstance(subsection, dict) and 'h3' in subsection:
-                        h3 = subsection.get('h3')
-                        required_structure.append(f"  H3: {h3} [REQUIRES 100-150 WORDS OF CONTENT]")
-        
-        required_structure.append("CONCLUSION [100-150 WORDS]")
-        required_structure_str = "\n".join(required_structure)
+        # Format the current headings and content for reference
+        existing_structure_str = ""
+        for heading in existing_headings:
+            heading_text = heading.get('text', '')
+            heading_level = heading.get('level', 2)
+            
+            prefix = "H1: " if heading_level == 1 else "H2: " if heading_level == 2 else "H3: "
+            indentation = "" if heading_level <= 2 else "  "
+            existing_structure_str += f"{indentation}{prefix}{heading_text}\n"
         
         # Prepare important terms data
         primary_terms_str = ""
@@ -3231,79 +3223,74 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             topics_to_cover_str = "\n".join(topics)
         
-        # Generate optimized article as a single, cohesive piece with natural flow
+        # Generate strategically optimized article that preserves most original content
         optimized_content_response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
             max_tokens=8000,  # Increased for full article
-            system="""You are an expert content writer known for creating engaging, conversational articles.
-            Your writing flows naturally with smooth transitions between ideas, varied sentence structures, 
-            and a personable tone that connects with readers.
+            system="""You are an expert content editor who specializes in making strategic, precise edits to existing 
+            content to improve SEO performance without changing the author's voice, style or core substance.
             
-            You create content that:
-            1. Reads naturally like high-quality human writing
-            2. Uses varied transitions between sentences and paragraphs
-            3. Maintains a consistent, engaging voice throughout
-            4. Balances informative content with reader-friendly language
-            5. Incorporates keywords and topics naturally without disrupting the flow""",
+            Your optimization approach:
+            1. Preserve 90% of the existing content and structure
+            2. Make targeted edits focused only on improving performance
+            3. Maintain existing headings and subheadings unless absolutely necessary to change
+            4. Make paragraph-level changes only where they will significantly improve results
+            5. Retain the original voice, tone, and style""",
             
             messages=[
                 {"role": "user", "content": f"""
-                Create an optimized article about "{keyword}" by enhancing the existing content using the competitor content as reference.
+                Strategically optimize the existing content about "{keyword}" with minimal disruption to the original material.
                 
-                REQUIRED STRUCTURE (with content requirements):
-                {required_structure_str}
+                EXISTING CONTENT STRUCTURE:
+                {existing_structure_str}
                 
-                ORIGINAL CONTENT:
+                FULL EXISTING CONTENT:
                 {original_content}
                 
                 COMPETITOR CONTENT REFERENCE:
                 {combined_competitor_content}
                 
-                ARTICLE WRITING REQUIREMENTS:
-                1. Create a COHESIVE, FLOWING article that reads naturally from start to finish
-                2. Write in a CONVERSATIONAL, ENGAGING tone that sounds like high-quality human writing
-                3. Create SMOOTH TRANSITIONS between sentences, paragraphs, and sections
-                4. Use VARIED SENTENCE STRUCTURES (mix of short and longer sentences)
-                5. Include TRANSITIONAL PHRASES like "Additionally," "Furthermore," "However," "In contrast," etc.
-                6. Include proper CONTENT UNDER EACH HEADING:
-                   - 150-200 words of unique content directly under each H2 heading (before any H3 subsections)
-                   - 100-150 words under each H3 heading
-                7. Address the reader directly using "you" where appropriate
-                8. Use CONCRETE EXAMPLES to illustrate key points
+                OPTIMIZATION REQUIREMENTS:
+                1. PRESERVE 90% OF THE ORIGINAL CONTENT - this is the most important requirement
+                2. Keep ALL existing headings and subheadings unless absolutely critical to change
+                3. Retain the original voice, tone, and flow of the content
+                4. DO NOT completely rewrite any section - make paragraph-level changes only
+                5. Focus changes specifically on performance improvement
                 
-                SEO REQUIREMENTS:
+                TARGETED IMPROVEMENTS (FOCUS ONLY ON THESE):
+                1. Incorporate missing primary terms where they fit naturally
+                2. Improve weak paragraphs by enhancing with factual information
+                3. Make minimal additions where a key topic is missing
+                4. Fix paragraphs that need better flow between ideas
+                5. Optimize introduction and conclusion if needed
+                
+                SEO REFERENCE:
                 Primary terms to include:
                 {primary_terms_str}
                 
                 Secondary terms to include:
                 {secondary_terms_str}
                 
-                Topics to cover:
+                Topics that should be covered:
                 {topics_to_cover_str}
                 
                 FORMAT REQUIREMENTS:
-                - Format with proper HTML tags
-                - Main title in <h1> tags
-                - Section headings in <h2> tags
-                - Subsection headings in <h3> tags
-                - Paragraphs in <p> tags
-                - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                - Maintain all existing HTML structure
+                - Use proper HTML tags for any edited paragraphs
+                - Keep paragraphs concise (2-3 sentences)
                 
-                CONTENT QUALITY CHECKLIST:
-                - Does each section have enough content?
-                - Is the language natural and flowing?
-                - Are transitions smooth between ideas?
-                - Is the tone consistent and engaging?
-                - Are primary terms incorporated naturally?
+                KEY DIRECTIVE:
+                THIS IS CRITICAL: Your goal is to make strategic, targeted paragraph-level improvements while preserving 
+                90% of the original content. The client wants surgical edits focused only on performance, NOT rewrites.
                 
                 After the article, include a separate section with the heading <h2>OPTIMIZATION SUMMARY</h2> that lists:
-                1. Key improvements made to the content
-                2. How the structure and flow were enhanced
-                3. How natural language was improved
-                4. Important terms and topics that were incorporated
+                1. Exactly what percentage of the original content was preserved
+                2. Specific, targeted paragraph changes that were made (list exact locations)
+                3. Where terms were strategically added
+                4. Any minor structural improvements made
                 """}
             ],
-            temperature=0.7  # Higher temperature for more natural language
+            temperature=0.2  # Very low temperature for more conservative edits
         )
         
         full_response = optimized_content_response.content[0].text
@@ -3324,13 +3311,14 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 system="You are an expert at summarizing content optimizations.",
                 messages=[
                     {"role": "user", "content": f"""
-                    Compare the original content and the optimized content below, and create a summary of the optimizations made.
+                    Create a summary of the precise, targeted optimizations made to the original content.
+                    The optimization goal was to preserve 90% of the original content while making strategic improvements for SEO.
                     
-                    ORIGINAL CONTENT STRUCTURE:
-                    {json.dumps([h.get('text', '') for h in existing_headings], indent=2)}
-                    
-                    NEW CONTENT STRUCTURE:
-                    {required_structure_str}
+                    Key areas to highlight:
+                    1. Percentage of original content preserved (should be 90% or higher)
+                    2. Specific paragraphs that were modified and why
+                    3. Specific terms added and where they were placed
+                    4. Any minor structural improvements made
                     
                     Format the summary with HTML headings and lists.
                     """}
