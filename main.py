@@ -3112,7 +3112,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         original_content = existing_content.get('full_text', '')
         existing_headings = existing_content.get('headings', [])
         
-        # Estimate words per section based on target word count and structure
+        # Estimate words per section
         num_sections = len(semantic_structure.get('sections', []))
         if num_sections == 0:
             num_sections = 5  # Default if no sections defined
@@ -3120,7 +3120,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         # Calculate target words per section (allowing 15% for H1 and conclusion)
         words_per_section = int((target_word_count * 0.85) / num_sections)
         
-        # Get section text for each heading to process sections individually
+        # Get section text for each heading
         section_content = {}
         for i, heading in enumerate(existing_headings):
             heading_text = heading.get('text', '')
@@ -3229,17 +3229,19 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 # No matching content found - create new section with controlled length
                 section_content_response = client.messages.create(
                     model="claude-3-7-sonnet-20250219",
-                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
-                    system="You are an expert content writer focused on concise, informative content.",
+                    max_tokens=section_word_limit * 2,
+                    system="You are an expert content writer focused on creating unique, engaging content. Avoid repetitive phrasing and generic statements.",
                     messages=[
                         {"role": "user", "content": f"""
-                            Write content for this section about "{keyword}": {h2}
+                            Write NEW content for this section about "{keyword}": {h2}
                             
                             Requirements:
                             1. Include relevant information based on competitor content
                             2. Improve semantic relevance to the keyword
                             3. STRICTLY limit to {section_word_limit} words
-                            4. Create substantive, non-fluff content
+                            4. Create substantive, specific content (avoid generic language)
+                            5. Use varied sentence structures and engaging writing
+                            6. Avoid repeating the same phrases or patterns from other sections
                             
                             Important terms to include:
                             Primary terms (use these if relevant):
@@ -3252,20 +3254,17 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             {topics_to_cover_str}
                             
                             Format with proper HTML paragraph tags.
+                            This content will be colored ORANGE in the document to show it's a new addition.
                         """}
                     ],
-                    temperature=0.4
+                    temperature=0.7  # Increased for more creativity and variety
                 )
                 
                 new_section_content = section_content_response.content[0].text
                 
-                # Apply orange color for new content
-                new_section_content = re.sub(
-                    r'(<p>)(.*?)(</p>)',
-                    r'<p style="color: rgb(255, 165, 0);">\2</p>',
-                    new_section_content,
-                    flags=re.DOTALL
-                )
+                # Apply orange color to new content by wrapping in custom span
+                new_section_content = new_section_content.replace("<p>", "<p><span style='color:#FF8C00;'>")
+                new_section_content = new_section_content.replace("</p>", "</span></p>")
                 
                 optimized_sections.append(new_section_content)
                 
@@ -3285,11 +3284,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 # Enhance this section with strict word count limit
                 enhanced_section_response = client.messages.create(
                     model="claude-3-7-sonnet-20250219",
-                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML and improvements
-                    system="You are an expert at enhancing content while preserving value and maintaining conciseness.",
+                    max_tokens=section_word_limit * 2,
+                    system="""You are an expert at enhancing content while preserving value.
+                    Your improvements make content more engaging, specific, and varied.
+                    Avoid repetitive phrases and generic language.""",
                     messages=[
                         {"role": "user", "content": f"""
-                            Enhance this original content section while PRESERVING its value.
+                            Enhance this original content section while PRESERVING its core value.
                             
                             Original heading: {matching_heading}
                             New heading: {h2}
@@ -3301,8 +3302,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             1. Keep all valuable information from the original content
                             2. Preserve specific examples, data points, and unique insights
                             3. Improve semantic relevance to keyword "{keyword}"
-                            4. Fix any unclear writing but maintain the original voice
-                            5. STRICTLY limit to {section_word_limit} words
+                            4. ENHANCE the writing with more specific details and varied language
+                            5. REMOVE any repetitive phrases or generic statements
+                            6. STRICTLY limit to {section_word_limit} words
+                            7. Mark significant changes or improvements in RED text
                             
                             Important terms to include or increase usage of:
                             Primary terms (use these if relevant):
@@ -3312,12 +3315,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             {secondary_terms_str}
                             
                             Format with proper HTML paragraph tags.
+                            Wrap ANY significant changes or new text in: <span style='color:#FF0000;'>changed text</span>
                             
                             Also provide a single sentence summary of the key improvements you made:
                             IMPROVEMENTS: [single sentence summary of key improvements]
                         """}
                     ],
-                    temperature=0.3
+                    temperature=0.5
                 )
                 
                 enhanced_response = enhanced_section_response.content[0].text
@@ -3338,14 +3342,6 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     enhanced_content = enhanced_response
                     if matching_heading != h2:
                         structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
-                
-                # Apply red color for modified content
-                enhanced_content = re.sub(
-                    r'(<p>)(.*?)(</p>)',
-                    r'<p style="color: rgb(255, 0, 0);">\2</p>',
-                    enhanced_content,
-                    flags=re.DOTALL
-                )
                 
                 optimized_sections.append(enhanced_content)
                 
@@ -3371,36 +3367,35 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     # Generate content for this subsection with strict word limit
                     subsection_content_response = client.messages.create(
                         model="claude-3-7-sonnet-20250219",
-                        max_tokens=subsection_word_limit * 2,  # Allow some extra tokens for HTML
-                        system="You are an expert content writer focused on brevity and impact.",
+                        max_tokens=subsection_word_limit * 2,
+                        system="You are an expert content writer focused on creating unique, specific content for each subsection.",
                         messages=[
                             {"role": "user", "content": f"""
-                                Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
+                                Write concise, engaging content for this subsection about "{keyword}": {h3} (under main section {h2})
                                 
                                 Requirements:
-                                1. Include ONLY the most essential information
-                                2. Improve semantic relevance to keyword
+                                1. Include ONLY highly relevant, specific information
+                                2. Use varied, engaging language that doesn't repeat patterns from other sections
                                 3. STRICTLY limit to {subsection_word_limit} words total
-                                4. Be substantive and informative despite brevity
+                                4. Make this subsection unique in style and approach
+                                5. Include specific details, examples or actionable information
                                 
                                 Important terms to include if relevant:
                                 Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
                                 
                                 Format with proper HTML paragraph tags.
+                                This is a new subsection, so wrap ALL content in: <span style='color:#FF8C00;'>new content</span>
                             """}
                         ],
-                        temperature=0.4
+                        temperature=0.7  # Increased for more variety
                     )
                     
                     subsection_content = subsection_content_response.content[0].text
                     
-                    # Apply orange color for new content
-                    subsection_content = re.sub(
-                        r'(<p>)(.*?)(</p>)',
-                        r'<p style="color: rgb(255, 165, 0);">\2</p>',
-                        subsection_content,
-                        flags=re.DOTALL
-                    )
+                    # Ensure content is properly colored as new (orange)
+                    if "<span style='color:#FF8C00;'>" not in subsection_content:
+                        subsection_content = subsection_content.replace("<p>", "<p><span style='color:#FF8C00;'>")
+                        subsection_content = subsection_content.replace("</p>", "</span></p>")
                     
                     optimized_sections.append(subsection_content)
                     
@@ -3419,36 +3414,52 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             conclusion_response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=conclusion_word_limit * 2,  # Allow some extra tokens for HTML
-                system="You are an expert at writing concise, impactful conclusions.",
+                max_tokens=conclusion_word_limit * 2,
+                system="You are an expert at writing concise, impactful conclusions that avoid repetition.",
                 messages=[
                     {"role": "user", "content": f"""
                         Write a brief conclusion for an article about "{keyword}".
                         
                         Requirements:
-                        1. Summarize key points
+                        1. Summarize key points without repeating exact phrases from earlier sections
                         2. Include a call to action
                         3. Reinforce the keyword relevance
                         4. Include at least 2 primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
-                        5. STRICTLY limit to {conclusion_word_limit} words
+                        5. Use fresh language that hasn't been used elsewhere in the article
+                        6. STRICTLY limit to {conclusion_word_limit} words
                         
                         Format with proper HTML paragraph tags.
+                        Wrap the conclusion in: <span style='color:#FF8C00;'>conclusion text</span>
                     """}
                 ],
-                temperature=0.4
+                temperature=0.7
             )
             
             conclusion_content = conclusion_response.content[0].text
             
-            # Apply orange color for new content
-            conclusion_content = re.sub(
-                r'(<p>)(.*?)(</p>)',
-                r'<p style="color: rgb(255, 165, 0);">\2</p>',
-                conclusion_content,
-                flags=re.DOTALL
-            )
-            
+            # Ensure content is properly colored as new
+            if "<span style='color:#FF8C00;'>" not in conclusion_content:
+                conclusion_content = conclusion_content.replace("<p>", "<p><span style='color:#FF8C00;'>")
+                conclusion_content = conclusion_content.replace("</p>", "</span></p>")
+                
             optimized_sections.append(conclusion_content)
+        
+        # Find sections from original content that weren't used - mark as deleted
+        unused_headings = []
+        for heading in existing_headings:
+            heading_text = heading.get('text', '')
+            if heading_text and heading_text not in processed_headings:
+                unused_headings.append(heading_text)
+                content = section_content.get(heading_text, '')
+                if content:
+                    # Add deleted section with strikethrough and gray color
+                    deleted_section = f"<h2><span style='color:#808080; text-decoration:line-through;'>{heading_text}</span></h2>"
+                    deleted_content = f"<p><span style='color:#808080; text-decoration:line-through;'>{content}</span></p>"
+                    optimized_sections.append(deleted_section)
+                    optimized_sections.append(deleted_content)
+                    
+                    # Track deletion
+                    structure_changes.append(f"Removed section: {heading_text}")
         
         # Create final document with change summary
         optimized_html = "\n".join(optimized_sections)
@@ -3469,6 +3480,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 <li>Incorporated important terms identified in top-ranking content</li>
             </ul>
             
+            <h3>Visual Change Guide:</h3>
+            <ul>
+                <li><span style='color:#FF0000;'>Red text</span>: Modified or changed content</li>
+                <li><span style='color:#FF8C00;'>Orange text</span>: New additions or sections</li>
+                <li><span style='color:#808080; text-decoration:line-through;'>Gray strikethrough</span>: Deleted content</li>
+            </ul>
+            
             <h3>Structure Changes:</h3>
             <ul>
                 {"".join(f"<li>{change}</li>" for change in structure_changes[:5])}
@@ -3479,13 +3497,6 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             <ul>
                 {"".join(f"<li>{improvement}</li>" for improvement in content_improvements[:5])}
                 {f"<li>Plus {len(content_improvements) - 5} additional content improvements</li>" if len(content_improvements) > 5 else ""}
-            </ul>
-            
-            <h3>Color Legend:</h3>
-            <ul>
-                <li><span style="color: red;">Red text</span>: Modified or changed content</li>
-                <li><span style="color: orange;">Orange text</span>: New additions</li>
-                <li><span style="text-decoration: line-through; color: gray;">Gray strikethrough</span>: Deleted elements (shown in Word document)</li>
             </ul>
         </div>
         """
