@@ -1145,20 +1145,6 @@ def score_content(content_html: str, term_data: Dict, keyword: str) -> Tuple[Opt
     logger.info(f"Content scoring complete for keyword '{keyword}'. Overall Score: {overall_score}")
     return score_data, "Success"
 
-#==============================================================================
-# End of Chunk 2/4
-#==============================================================================
-```
-
----
-
-**Refactored Code - Chunk 3/4**
-
-```python
-#==============================================================================
-# Start of Chunk 3/4
-#==============================================================================
-
 def highlight_keywords_in_content(content_html: str, term_data: Dict, keyword: str) -> Tuple[str, str]:
     """
     Highlight primary keyword, primary terms, and secondary terms in HTML content.
@@ -1579,20 +1565,6 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         error_msg = f"Unexpected error generating meta tags: {e}"
         logger.error(error_msg, exc_info=True)
         return None, None, error_msg
-
-#==============================================================================
-# End of Chunk 3/4
-#==============================================================================
-```
-
----
-
-**Refactored Code - Chunk 4/4**
-
-```python
-#==============================================================================
-# Start of Chunk 4/4
-#==============================================================================
 
 ###############################################################################
 # 7. Content Generation (New Article)
@@ -3662,7 +3634,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-#==============================================================================
-# End of Chunk 4/4
-#==============================================================================
-```
