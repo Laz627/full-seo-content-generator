@@ -1422,39 +1422,29 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         serp_features_str = ", ".join(serp_features_list)
         
-        # Prepare People Also Asked questions - LIMIT to top 3
+        # Prepare People Also Asked questions - LIMIT to top 5
         paa_str = ""
         if paa_questions and isinstance(paa_questions, list):
-            for i, question in enumerate(paa_questions[:3], 1):
+            for i, question in enumerate(paa_questions[:5], 1):
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # IMPROVED: Better format for primary and secondary terms with their recommended usage
-        # LIMIT to fewer terms to prevent overloading
-        primary_terms_with_usage = []
+        # Format primary and secondary terms with their recommended usage
+        primary_terms_list = []
         if term_data and 'primary_terms' in term_data:
-            for term_info in term_data.get('primary_terms', [])[:5]:  # LIMIT to top 5 primary terms
+            for term_info in term_data.get('primary_terms', [])[:10]:  # LIMIT to top 10 primary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 usage = term_info.get('recommended_usage', 1)
                 if term:
-                    primary_terms_with_usage.append({
-                        'term': term,
-                        'importance': importance,
-                        'usage': usage
-                    })
-        
-        # Format primary terms for better inclusion in the prompt
-        primary_terms_list = []
-        for term_info in primary_terms_with_usage:
-            primary_terms_list.append(f"{term_info['term']} (use {term_info['usage']} times)")
+                    primary_terms_list.append(f"{term} (use {usage} times)")
         
         primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
         
-        # IMPROVED: Better format for secondary terms - LIMIT to fewer terms
+        # Format secondary terms
         secondary_terms_list = []
         if term_data and 'secondary_terms' in term_data:
-            for term_info in term_data.get('secondary_terms', [])[:8]:  # LIMIT to top 8 secondary terms
+            for term_info in term_data.get('secondary_terms', [])[:15]:  # LIMIT to top 15 secondary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 if term and importance > 0.5:
@@ -1462,8 +1452,19 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms_list])
         
+        # Extract topic information if available
+        topics_str = ""
+        if term_data and 'topics' in term_data:
+            topics = []
+            for topic_info in term_data.get('topics', []):
+                topic = topic_info.get('topic', '')
+                description = topic_info.get('description', '')
+                if topic:
+                    topics.append(f"- {topic}: {description}")
+            topics_str = "\n".join(topics)
+        
         if guidance_only:
-            # Generate writing guidance for each section
+            # Generate writing guidance for the entire article
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
                 max_tokens=7000,
@@ -1485,6 +1486,8 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Sections:
                     {sections_str}
                     
+                    MAKE SURE to include explicit guidance for EVERY H2 section, explaining what content should be included under each H2 heading BEFORE any H3 subsections.
+                    
                     Content context:
                     - Main keyword: {keyword}
                     - Related keywords to incorporate: {related_kw_str}
@@ -1498,12 +1501,24 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Secondary terms (try to include these at least once):
                     {secondary_terms_str}
                     
+                    Topics to cover:
+                    {topics_str}
+                    
+                    WRITING STYLE GUIDANCE:
+                    - Use a conversational, engaging tone
+                    - Vary sentence structure to maintain reader interest
+                    - Use transitional phrases between paragraphs and sections
+                    - Create smooth connections between topics
+                    - Balance informative content with a friendly, accessible approach
+                    
                     Format the guidance with proper HTML:
                     - Main title in <h1> tags
                     - Section headings in <h2> tags
                     - Subsection headings in <h3> tags
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
+                    
+                    Treat this article as a cohesive whole, not just a collection of separate sections. Consider how sections flow together and reference each other throughout the guidance.
                     
                     Aim for comprehensive guidance that will help a writer create a 1,200-1,500 word article.
                     """}
@@ -1514,75 +1529,74 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # SIGNIFICANTLY IMPROVED: Increased max_tokens, keep structure instructions
+            # Generate full article with comprehensive structure and natural flow
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=6000,  # INCREASED max_tokens to ensure full article generation
-                system="""You are an expert content writer who creates concise, structured articles.
-                You are known for completing articles within the specified word count while covering all requested sections.
+                max_tokens=7000,  # Increased max_tokens for full article generation
+                system="""You are an expert content writer who creates engaging, flowing articles.
+                Your writing stands out for its natural conversational tone and smooth transitions between ideas.
                 
                 Your writing principles:
-                1. Write extremely concise paragraphs (2-3 sentences each)
-                2. Use clear headings for organization (H1, H2, H3, H4)
-                3. Cover all requested sections briefly rather than some sections in depth
-                4. Integrate required SEO terms naturally throughout the article
-                5. Prioritize completeness over depth""",
+                1. Write in a natural, conversational style that flows easily
+                2. Create smooth transitions between sentences, paragraphs, and sections
+                3. Balance informative content with engaging language
+                4. Use varied sentence structures to maintain reader interest
+                5. Integrate keywords naturally without disrupting the flow""",
                 
                 messages=[
                     {"role": "user", "content": f"""
-                    Write a concise article about "{keyword}" that covers ALL the sections outlined below.
+                    Write an engaging, flowing article about "{keyword}" covering all the sections outlined below.
                     
                     Use this semantic structure:
                     H1: {h1}
                     
-                    Sections to include (YOU MUST INCLUDE ALL SECTIONS LISTED - this is critical):
+                    Sections:
                     {sections_str}
                     
-                    STRICT LENGTH REQUIREMENTS:
-                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words maximum (STRICTLY ENFORCE THIS)
-                    2. PARAGRAPH LENGTH: Each paragraph must be only 2-3 sentences (VERY IMPORTANT)
+                    CRITICAL CONTENT STRUCTURE REQUIREMENTS:
+                    1. After the H1 title, write an introduction (150-200 words)
+                    2. For EACH H2 section:
+                       - Add 150-200 words of content DIRECTLY under the H2 heading BEFORE any H3 subsections
+                       - Then include any H3 subsections with their own content (100-150 words each)
+                    3. After all sections, end with a conclusion (100-150 words)
                     
-                    SECTION WORD COUNTS (to ensure completeness):
-                    - Introduction: 100-150 words
-                    - Each H2 section: 75-100 words maximum
-                    - Each H3 subsection: 50-75 words maximum
-                    - Each H4 subsection: 25-50 words maximum
-                    - Conclusion: 100 words maximum
+                    LENGTH REQUIREMENTS:
+                    - Total article: 1,200-1,500 words
+                    - Paragraphs: 2-3 sentences each, varying length for natural flow
                     
-                    CONTENT STRUCTURE:
-                    1. Start with a brief introduction
-                    2. Include ALL the H2 sections listed above (crucial)
-                    3. Include ALL H3 subsections listed under each H2 (crucial)
-                    4. Add H4 subheadings where helpful for organization
-                    5. End with a brief conclusion
+                    WRITING STYLE REQUIREMENTS:
+                    - Use a conversational, personable tone throughout
+                    - Create smooth transitions between paragraphs and sections
+                    - Vary sentence structure (mix short, punchy sentences with longer ones)
+                    - Use transitional phrases like "Additionally," "Furthermore," "However," "On the other hand"
+                    - Connect ideas across sections when relevant
+                    - Use concrete examples to illustrate points
+                    - Address the reader directly using "you" where appropriate
                     
-                    CRITICAL SEO REQUIREMENTS:
-                    Primary terms to include (with exact usage count):
+                    SEO REQUIREMENTS:
+                    Primary terms to include:
                     {primary_terms_str}
                     
-                    Secondary terms to include (at least once each):
+                    Secondary terms to include:
                     {secondary_terms_str}
                     
-                    Address these questions briefly within the content:
-                    {paa_str}
+                    Topics to cover:
+                    {topics_str}
                     
-                    CRITICAL WRITING INSTRUCTIONS:
-                    1. DO NOT use rhetorical questions
-                    2. ENSURE every paragraph is only 2-3 sentences
-                    3. ENSURE all listed sections are included
-                    4. MAINTAIN STRICT TOTAL WORD COUNT of 1,200-1,500 words
-                    5. USE bullet points instead of long paragraphs for lists
+                    Questions to address:
+                    {paa_str}
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
                     - Section headings in <h2> tags
                     - Subsection headings in <h3> tags
-                    - Sub-subsection headings in <h4> tags
                     - Paragraphs in <p> tags
                     - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                    
+                    REMEMBER: This should read like a naturally flowing article written by a human, not a stiff, formulaic piece. The goal is engaging content that provides value while maintaining SEO benefits.
                     """}
                 ],
-                temperature=0.4  # Reduced temperature for more consistent output
+                temperature=0.7  # Higher temperature for more natural language variation
             )
             
             article_content = response.content[0].text
@@ -3163,22 +3177,23 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         if len(combined_competitor_content) > 15000:
             combined_competitor_content = combined_competitor_content[:15000]
         
-        # Format required content structure
+        # Format required content structure with content expectations
         required_structure = []
         if 'h1' in semantic_structure:
             h1 = semantic_structure.get('h1')
-            required_structure.append(f"H1: {h1}")
+            required_structure.append(f"H1: {h1} [FOLLOWED BY 150-200 WORD INTRODUCTION]")
         
         for section in semantic_structure.get('sections', []):
             if section and isinstance(section, dict) and 'h2' in section:
                 h2 = section.get('h2')
-                required_structure.append(f"H2: {h2}")
+                required_structure.append(f"H2: {h2} [REQUIRES 150-200 WORDS OF CONTENT DIRECTLY UNDER THIS H2 HEADING]")
                 
                 for subsection in section.get('subsections', []):
                     if subsection and isinstance(subsection, dict) and 'h3' in subsection:
                         h3 = subsection.get('h3')
-                        required_structure.append(f"  H3: {h3}")
+                        required_structure.append(f"  H3: {h3} [REQUIRES 100-150 WORDS OF CONTENT]")
         
+        required_structure.append("CONCLUSION [100-150 WORDS]")
         required_structure_str = "\n".join(required_structure)
         
         # Prepare important terms data
@@ -3216,28 +3231,26 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             topics_to_cover_str = "\n".join(topics)
         
-        # Generate optimized article as a single, cohesive piece
-        # This approach treats the article as a whole, not section by section
+        # Generate optimized article as a single, cohesive piece with natural flow
         optimized_content_response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
             max_tokens=8000,  # Increased for full article
-            system="""You are an expert content optimizer who creates cohesive, well-structured articles.
-            Your task is to optimize existing content based on competitor references, but maintain the valuable 
-            elements of the original content.
+            system="""You are an expert content writer known for creating engaging, conversational articles.
+            Your writing flows naturally with smooth transitions between ideas, varied sentence structures, 
+            and a personable tone that connects with readers.
             
-            Your optimization principles:
-            1. Create a cohesive article that flows naturally from start to finish
-            2. Use clear semantic structure following the required headings
-            3. Maintain interconnections between sections - don't treat them as isolated segments
-            4. Incorporate SEO terms naturally throughout the entire article
-            5. Ensure factual accuracy by referencing competitor content
-            6. Preserve valuable insights from the original content""",
+            You create content that:
+            1. Reads naturally like high-quality human writing
+            2. Uses varied transitions between sentences and paragraphs
+            3. Maintains a consistent, engaging voice throughout
+            4. Balances informative content with reader-friendly language
+            5. Incorporates keywords and topics naturally without disrupting the flow""",
             
             messages=[
                 {"role": "user", "content": f"""
                 Create an optimized article about "{keyword}" by enhancing the existing content using the competitor content as reference.
                 
-                REQUIRED SEMANTIC STRUCTURE:
+                REQUIRED STRUCTURE (with content requirements):
                 {required_structure_str}
                 
                 ORIGINAL CONTENT:
@@ -3246,17 +3259,17 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 COMPETITOR CONTENT REFERENCE:
                 {combined_competitor_content}
                 
-                LENGTH REQUIREMENTS:
-                - Target word count: {target_word_count} words
-                - Each paragraph should be 2-3 sentences (concise)
-                
-                OPTIMIZATION INSTRUCTIONS:
-                1. Follow the required semantic structure
-                2. Preserve valuable information from the original content
-                3. Enhance with factual information from competitor content
-                4. Create a COHESIVE ARTICLE that flows naturally between sections
-                5. Add transitions between sections to maintain a unified narrative
-                6. Ensure the article reads as one cohesive piece, not isolated sections
+                ARTICLE WRITING REQUIREMENTS:
+                1. Create a COHESIVE, FLOWING article that reads naturally from start to finish
+                2. Write in a CONVERSATIONAL, ENGAGING tone that sounds like high-quality human writing
+                3. Create SMOOTH TRANSITIONS between sentences, paragraphs, and sections
+                4. Use VARIED SENTENCE STRUCTURES (mix of short and longer sentences)
+                5. Include TRANSITIONAL PHRASES like "Additionally," "Furthermore," "However," "In contrast," etc.
+                6. Include proper CONTENT UNDER EACH HEADING:
+                   - 150-200 words of unique content directly under each H2 heading (before any H3 subsections)
+                   - 100-150 words under each H3 heading
+                7. Address the reader directly using "you" where appropriate
+                8. Use CONCRETE EXAMPLES to illustrate key points
                 
                 SEO REQUIREMENTS:
                 Primary terms to include:
@@ -3265,26 +3278,32 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 Secondary terms to include:
                 {secondary_terms_str}
                 
-                Topics to cover throughout the article:
+                Topics to cover:
                 {topics_to_cover_str}
                 
-                KEY OPTIMIZATION DIRECTIVE:
-                Create a single, unified article that weaves together all the required sections, rather than optimizing each section in isolation.
-                
-                Format the article with proper HTML:
+                FORMAT REQUIREMENTS:
+                - Format with proper HTML tags
                 - Main title in <h1> tags
                 - Section headings in <h2> tags
                 - Subsection headings in <h3> tags
                 - Paragraphs in <p> tags
                 - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                 
-                After the article, please include a separate section with the heading <h2>OPTIMIZATION SUMMARY</h2> that lists:
+                CONTENT QUALITY CHECKLIST:
+                - Does each section have enough content?
+                - Is the language natural and flowing?
+                - Are transitions smooth between ideas?
+                - Is the tone consistent and engaging?
+                - Are primary terms incorporated naturally?
+                
+                After the article, include a separate section with the heading <h2>OPTIMIZATION SUMMARY</h2> that lists:
                 1. Key improvements made to the content
-                2. How the structure was enhanced
-                3. Important terms and topics that were incorporated
+                2. How the structure and flow were enhanced
+                3. How natural language was improved
+                4. Important terms and topics that were incorporated
                 """}
             ],
-            temperature=0.3  # Lower temperature for more consistent output
+            temperature=0.7  # Higher temperature for more natural language
         )
         
         full_response = optimized_content_response.content[0].text
