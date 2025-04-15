@@ -1340,11 +1340,12 @@ def analyze_semantic_structure(contents: List[Dict], anthropic_api_key: str) -> 
 
 def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
                      serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
-                     anthropic_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
+                     anthropic_api_key: str, openai_api_key: str, competitor_contents: List[Dict],
+                     guidance_only: bool = False) -> Tuple[str, bool]:
     """
     Generate comprehensive article with natural language flow and balanced keyword usage.
+    Uses competitor content embeddings for more relevant content.
     If guidance_only is True, will generate writing guidance instead of full content.
-    Uses Claude 3.7 Sonnet to optimize for important terms and proper length.
     Returns: article_content, success_status
     """
     try:
@@ -1374,71 +1375,101 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         if not sections_str:
             sections_str = f"- Introduction to {keyword}\n- Key Benefits\n- How to Use\n- Conclusion\n"
         
-        # Prepare related keywords with error handling
-        related_kw_list = []
-        if related_keywords and isinstance(related_keywords, list):
-            for kw in related_keywords[:5]:  # LIMIT to top 5 only
-                if kw and isinstance(kw, dict) and 'keyword' in kw:
-                    related_kw_list.append(kw.get('keyword', ''))
+        # Process competitor content with embeddings
+        competitor_paragraphs = []
+        for content in competitor_contents:
+            if content.get('content'):
+                # Split content into paragraphs
+                paragraphs = re.split(r'\n\n+', content.get('content', ''))
+                # Filter out very short paragraphs
+                paragraphs = [p for p in paragraphs if len(p.split()) > 20]
+                competitor_paragraphs.extend(paragraphs)
         
-        # Add default keywords if none exist
-        if not related_kw_list:
-            related_kw_list = [f"{keyword} guide", f"best {keyword}", f"{keyword} tips"]
+        # Generate embeddings for competitor paragraphs
+        competitor_embeddings = []
+        competitor_insights = {}
+        if openai_api_key and competitor_paragraphs:
+            try:
+                openai.api_key = openai_api_key
+                # Process in batches of 20 to avoid token limits
+                batch_size = 20
+                for i in range(0, len(competitor_paragraphs), batch_size):
+                    batch = competitor_paragraphs[i:i+batch_size]
+                    response = openai.Embedding.create(
+                        model="text-embedding-3-small",
+                        input=batch
+                    )
+                    batch_embeddings = [item['embedding'] for item in response['data']]
+                    competitor_embeddings.extend(list(zip(batch, batch_embeddings)))
+                
+                # For each section in the semantic structure, find the most relevant competitor paragraphs
+                for section in semantic_structure.get('sections', []):
+                    h2 = section.get('h2', '')
+                    if not h2:
+                        continue
+                    
+                    # Generate embedding for the section heading
+                    section_response = openai.Embedding.create(
+                        model="text-embedding-3-small",
+                        input=[h2]
+                    )
+                    section_embedding = section_response['data'][0]['embedding']
+                    
+                    # Find the top 3 most relevant paragraphs
+                    relevant_paragraphs = []
+                    for text, embedding in competitor_embeddings:
+                        # Calculate cosine similarity
+                        similarity = np.dot(section_embedding, embedding) / (
+                            np.linalg.norm(section_embedding) * np.linalg.norm(embedding)
+                        )
+                        relevant_paragraphs.append((text, similarity))
+                    
+                    # Sort by similarity (descending) and take top 3
+                    relevant_paragraphs.sort(key=lambda x: x[1], reverse=True)
+                    top_paragraphs = relevant_paragraphs[:3]
+                    
+                    # Store relevant paragraphs for this section
+                    competitor_insights[h2] = [p[0] for p in top_paragraphs]
+            except Exception as e:
+                logger.error(f"Error processing embeddings: {e}")
+                # Continue without embeddings if there's an error
+                pass
         
-        related_kw_str = ", ".join(related_kw_list)
+        # Format primary terms and other data for the prompt
+        primary_terms_str = ""
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = []
+            for term_info in term_data.get('primary_terms', [])[:5]:
+                term = term_info.get('term', '')
+                usage = term_info.get('recommended_usage', 1)
+                if term:
+                    primary_terms.append(f"{term} (use {usage} times)")
+            primary_terms_str = "\n".join([f"- {term}" for term in primary_terms])
         
-        # Prepare SERP features with error handling
-        serp_features_list = []
-        if serp_features and isinstance(serp_features, list):
-            for feature in serp_features[:3]:  # LIMIT to top 3 only
-                if feature and isinstance(feature, dict) and 'feature_type' in feature:
-                    count = feature.get('count', 1)
-                    serp_features_list.append(f"{feature.get('feature_type')} ({count})")
+        secondary_terms_str = ""
+        if term_data and 'secondary_terms' in term_data:
+            secondary_terms = []
+            for term_info in term_data.get('secondary_terms', [])[:8]:
+                term = term_info.get('term', '')
+                if term:
+                    secondary_terms.append(term)
+            secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms])
         
-        # Add default features if none exist
-        if not serp_features_list:
-            serp_features_list = ["featured snippet", "people also ask"]
+        # Create a string of competitor insights organized by section
+        competitor_insights_str = ""
+        for section_title, insights in competitor_insights.items():
+            competitor_insights_str += f"\nInsights for section '{section_title}':\n"
+            for i, insight in enumerate(insights, 1):
+                # Truncate long insights to avoid token overload
+                truncated_insight = insight[:300] + "..." if len(insight) > 300 else insight
+                competitor_insights_str += f"{i}. {truncated_insight}\n"
         
-        serp_features_str = ", ".join(serp_features_list)
-        
-        # Prepare People Also Asked questions - LIMIT to top 3
+        # Prepare PAA questions string
         paa_str = ""
         if paa_questions and isinstance(paa_questions, list):
             for i, question in enumerate(paa_questions[:3], 1):
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
-        
-        # Format primary and secondary terms
-        primary_terms_with_usage = []
-        if term_data and 'primary_terms' in term_data:
-            for term_info in term_data.get('primary_terms', [])[:5]:  # LIMIT to top 5 primary terms
-                term = term_info.get('term', '')
-                importance = term_info.get('importance', 0)
-                usage = term_info.get('recommended_usage', 1)
-                if term:
-                    primary_terms_with_usage.append({
-                        'term': term,
-                        'importance': importance,
-                        'usage': usage
-                    })
-        
-        # Format primary terms for better inclusion in the prompt
-        primary_terms_list = []
-        for term_info in primary_terms_with_usage:
-            primary_terms_list.append(f"{term_info['term']} (use {term_info['usage']} times)")
-        
-        primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
-        
-        # Format for secondary terms
-        secondary_terms_list = []
-        if term_data and 'secondary_terms' in term_data:
-            for term_info in term_data.get('secondary_terms', [])[:8]:  # LIMIT to top 8 secondary terms
-                term = term_info.get('term', '')
-                importance = term_info.get('importance', 0)
-                if term and importance > 0.5:
-                    secondary_terms_list.append(term)
-        
-        secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms_list])
         
         if guidance_only:
             # Generate writing guidance for each section
@@ -1458,6 +1489,9 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Sections:
                     {sections_str}
                     
+                    Competitor content insights (use for guidance but don't copy):
+                    {competitor_insights_str}
+                    
                     Content context:
                     - Main keyword: {keyword}
                     - Questions to address: {paa_str}
@@ -1472,13 +1506,13 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     NOTE: Do NOT include recommended word count, keywords to include, statistics, or tone of voice. Just provide general direction for what the section should contain.
                     """}
                 ],
-                temperature=0.7  # Increased for more diversity
+                temperature=0.7
             )
             
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # Full article generation with anti-repetition measures
+            # Full article generation with anti-repetition measures and competitor insights
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
                 max_tokens=6000,
@@ -1486,12 +1520,11 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 Your writing is known for being concise, varied, and non-repetitive.
                 
                 Your writing principles:
-                1. Create diverse content across sections - each section should have a unique approach and information
-                2. Use varied vocabulary and sentence structures
-                3. Never repeat the same phrases or points across different sections
-                4. Each paragraph should contain unique information
-                5. Ensure seamless flow between sections
-                6. Avoid formulaic writing and generic statements""",
+                1. Create unique content for each section with different approaches and examples
+                2. Use varied vocabulary, sentence structures and paragraph lengths
+                3. Never repeat the same information across different sections
+                4. Ensure each paragraph provides new, valuable information
+                5. Maintain a natural flow while avoiding formulaic writing patterns""",
                 
                 messages=[
                     {"role": "user", "content": f"""
@@ -1503,33 +1536,31 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Sections to include:
                     {sections_str}
                     
+                    Competitor content insights (use for guidance but DON'T copy):
+                    {competitor_insights_str}
+                    
                     ARTICLE REQUIREMENTS:
                     1. TOTAL LENGTH: 1,200-1,500 words maximum
-                    2. VARIETY: Each section must have a unique approach and perspective
-                    3. NO REPETITION: Never repeat the same points, phrases, or sentence structures across sections
+                    2. VARIETY: Each section must have a unique perspective and approach
+                    3. WRITE DIRECTLY: Avoid empty phrases like "In this section" or "Let's explore"
+                    4. SPECIFIC DETAILS: Include specific examples, facts, or actionable advice
+                    5. NO REPETITION: Never repeat information, phrases, or sentence patterns
                     
                     WRITING GUIDELINES:
-                    - Each section should have its own distinct voice and approach
-                    - Vary paragraph length (2-4 sentences per paragraph)
-                    - Use diverse transitional phrases between paragraphs and sections
-                    - Employ a mix of explanatory, descriptive, and actionable content
-                    - Ensure each section provides unique value to the reader
+                    - Make each section truly distinct in approach and information
+                    - Vary paragraph length (2-4 sentences) to improve readability
+                    - Use a mix of explanatory, descriptive, and actionable content
+                    - Move directly to the point without unnecessary introductory text
+                    - Use concrete examples rather than vague statements
                     
-                    CRITICAL ANTI-REPETITION INSTRUCTIONS:
-                    1. DO NOT use the same sentence structures repeatedly
-                    2. DO NOT repeat the same information in different sections
-                    3. DO NOT use formulaic writing (e.g., "In this section, we will discuss...")
-                    4. VARY your vocabulary throughout the article
-                    5. ENSURE each paragraph provides new information
-                    
-                    SEO REQUIREMENTS:
-                    Primary terms to include (distributed naturally throughout):
+                    CRITICAL SEO ELEMENTS:
+                    Primary terms to include (distributed naturally):
                     {primary_terms_str}
                     
-                    Secondary terms to include (at least once each):
+                    Secondary terms to include (at least once):
                     {secondary_terms_str}
                     
-                    Address these questions within the content:
+                    Questions to address within the content:
                     {paa_str}
                     
                     Format the article with proper HTML:
@@ -1540,7 +1571,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Use <ul>, <li> for bullet points
                     """}
                 ],
-                temperature=0.7  # Increased for more creative, diverse output
+                temperature=0.7
             )
             
             article_content = response.content[0].text
@@ -3100,9 +3131,9 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
                               keyword: str, paa_questions: List[Dict], term_data: Dict,
-                              anthropic_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
+                              anthropic_api_key: str, openai_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
     """
-    Enhanced article generation that incorporates term data using Claude 3.7 Sonnet
+    Enhanced article generation that incorporates term data and competitor content embeddings
     Returns: optimized_html_content, change_summary, success_status
     """
     try:
@@ -3112,7 +3143,67 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         original_content = existing_content.get('full_text', '')
         existing_headings = existing_content.get('headings', [])
         
-        # Estimate words per section
+        # Process competitor content with embeddings
+        competitor_paragraphs = []
+        for content in competitor_contents:
+            if content.get('content'):
+                # Split content into paragraphs
+                paragraphs = re.split(r'\n\n+', content.get('content', ''))
+                # Filter out very short paragraphs
+                paragraphs = [p for p in paragraphs if len(p.split()) > 20]
+                competitor_paragraphs.extend(paragraphs)
+        
+        # Generate embeddings for competitor paragraphs
+        competitor_embeddings = []
+        competitor_insights = {}
+        if openai_api_key and competitor_paragraphs:
+            try:
+                openai.api_key = openai_api_key
+                # Process in batches of 20 to avoid token limits
+                batch_size = 20
+                for i in range(0, len(competitor_paragraphs), batch_size):
+                    batch = competitor_paragraphs[i:i+batch_size]
+                    response = openai.Embedding.create(
+                        model="text-embedding-3-small",
+                        input=batch
+                    )
+                    batch_embeddings = [item['embedding'] for item in response['data']]
+                    competitor_embeddings.extend(list(zip(batch, batch_embeddings)))
+                
+                # For each section in the semantic structure, find the most relevant competitor paragraphs
+                for section in semantic_structure.get('sections', []):
+                    h2 = section.get('h2', '')
+                    if not h2:
+                        continue
+                    
+                    # Generate embedding for the section heading
+                    section_response = openai.Embedding.create(
+                        model="text-embedding-3-small",
+                        input=[h2]
+                    )
+                    section_embedding = section_response['data'][0]['embedding']
+                    
+                    # Find the top 3 most relevant paragraphs
+                    relevant_paragraphs = []
+                    for text, embedding in competitor_embeddings:
+                        # Calculate cosine similarity
+                        similarity = np.dot(section_embedding, embedding) / (
+                            np.linalg.norm(section_embedding) * np.linalg.norm(embedding)
+                        )
+                        relevant_paragraphs.append((text, similarity))
+                    
+                    # Sort by similarity (descending) and take top 3
+                    relevant_paragraphs.sort(key=lambda x: x[1], reverse=True)
+                    top_paragraphs = relevant_paragraphs[:3]
+                    
+                    # Store relevant paragraphs for this section
+                    competitor_insights[h2] = [p[0] for p in top_paragraphs]
+            except Exception as e:
+                logger.error(f"Error processing embeddings: {e}")
+                # Continue without embeddings if there's an error
+                pass
+        
+        # Estimate words per section based on target word count and structure
         num_sections = len(semantic_structure.get('sections', []))
         if num_sections == 0:
             num_sections = 5  # Default if no sections defined
@@ -3120,7 +3211,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         # Calculate target words per section (allowing 15% for H1 and conclusion)
         words_per_section = int((target_word_count * 0.85) / num_sections)
         
-        # Get section text for each heading
+        # Get section text for each heading to process sections individually
         section_content = {}
         for i, heading in enumerate(existing_headings):
             heading_text = heading.get('text', '')
@@ -3225,23 +3316,31 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 section_word_limit = words_per_section
                 subsection_word_limit = 0
             
+            # Get relevant competitor content for this section
+            competitor_content_for_section = ""
+            if h2 in competitor_insights:
+                competitor_content_for_section = "\n\n".join(competitor_insights[h2])
+            
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new section with controlled length
                 section_content_response = client.messages.create(
                     model="claude-3-7-sonnet-20250219",
-                    max_tokens=section_word_limit * 2,
-                    system="You are an expert content writer focused on creating unique, engaging content. Avoid repetitive phrasing and generic statements.",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
+                    system="You are an expert content writer focused on creating valuable, non-repetitive content for specific sections.",
                     messages=[
                         {"role": "user", "content": f"""
                             Write NEW content for this section about "{keyword}": {h2}
                             
+                            Relevant competitor content to reference (incorporate insights but DON'T copy):
+                            {competitor_content_for_section}
+                            
                             Requirements:
-                            1. Include relevant information based on competitor content
+                            1. Create substantive, specific content informed by the competitor insights
                             2. Improve semantic relevance to the keyword
                             3. STRICTLY limit to {section_word_limit} words
-                            4. Create substantive, specific content (avoid generic language)
-                            5. Use varied sentence structures and engaging writing
-                            6. Avoid repeating the same phrases or patterns from other sections
+                            4. Avoid generic language and repetitive phrases
+                            5. Use varied, engaging language and sentence structures
+                            6. Be specific and use examples where helpful
                             
                             Important terms to include:
                             Primary terms (use these if relevant):
@@ -3257,7 +3356,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             This content will be colored ORANGE in the document to show it's a new addition.
                         """}
                     ],
-                    temperature=0.7  # Increased for more creativity and variety
+                    temperature=0.7
                 )
                 
                 new_section_content = section_content_response.content[0].text
@@ -3281,16 +3380,15 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 processed_headings.add(matching_heading)
                 original_section_content = section_content.get(matching_heading, '')
                 
-                # Enhance this section with strict word count limit
+                # Enhanced approach for preserving original content
                 enhanced_section_response = client.messages.create(
                     model="claude-3-7-sonnet-20250219",
-                    max_tokens=section_word_limit * 2,
-                    system="""You are an expert at enhancing content while preserving value.
-                    Your improvements make content more engaging, specific, and varied.
-                    Avoid repetitive phrases and generic language.""",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
+                    system="""You are an expert at minimally enhancing content for SEO while preserving the original writing.
+                    Make only essential changes needed for SEO improvement - keep original content whenever possible.""",
                     messages=[
                         {"role": "user", "content": f"""
-                            Enhance this original content section while PRESERVING its core value.
+                            Review this original content section and make ONLY necessary SEO improvements.
                             
                             Original heading: {matching_heading}
                             New heading: {h2}
@@ -3298,30 +3396,35 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                             Original content:
                             {original_section_content}
                             
-                            Instructions:
-                            1. Keep all valuable information from the original content
-                            2. Preserve specific examples, data points, and unique insights
-                            3. Improve semantic relevance to keyword "{keyword}"
-                            4. ENHANCE the writing with more specific details and varied language
-                            5. REMOVE any repetitive phrases or generic statements
-                            6. STRICTLY limit to {section_word_limit} words
-                            7. Mark significant changes or improvements in RED text
+                            Relevant competitor content insights (for reference only):
+                            {competitor_content_for_section}
                             
-                            Important terms to include or increase usage of:
-                            Primary terms (use these if relevant):
+                            Instructions:
+                            1. PRESERVE 90-95% of the original content exactly as written
+                            2. Make MINIMAL, targeted changes for SEO improvement only
+                            3. DO NOT rewrite sentences that are already good
+                            4. DO NOT change the author's voice or style
+                            5. ONLY add new content if there's a significant gap related to "{keyword}"
+                            6. REMOVE any content that's clearly off-topic
+                            
+                            Focus on these improvements:
+                            1. Add 1-2 primary terms ONLY if they're missing and relevant
+                            2. Add a brief mention of any missing critical topic ONLY if it's clearly absent
+                            3. Correct any factual errors (rare)
+                            
+                            Important terms to potentially add:
+                            Primary terms that might be missing:
                             {primary_terms_str}
                             
-                            Secondary terms (try to include these if relevant):
-                            {secondary_terms_str}
-                            
                             Format with proper HTML paragraph tags.
-                            Wrap ANY significant changes or new text in: <span style='color:#FF0000;'>changed text</span>
+                            ONLY wrap the specific words or phrases you modify in: <span style='color:#FF0000;'>changed text</span>
+                            If you add a new sentence, wrap only that in: <span style='color:#FF8C00;'>new sentence</span>
                             
-                            Also provide a single sentence summary of the key improvements you made:
-                            IMPROVEMENTS: [single sentence summary of key improvements]
+                            Also provide a single sentence summary of what (if anything) you changed:
+                            IMPROVEMENTS: [single sentence summary of specific changes, or "No significant changes needed" if content was good]
                         """}
                     ],
-                    temperature=0.5
+                    temperature=0.3  # Lower temperature for more conservative changes
                 )
                 
                 enhanced_response = enhanced_section_response.content[0].text
@@ -3367,11 +3470,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     # Generate content for this subsection with strict word limit
                     subsection_content_response = client.messages.create(
                         model="claude-3-7-sonnet-20250219",
-                        max_tokens=subsection_word_limit * 2,
-                        system="You are an expert content writer focused on creating unique, specific content for each subsection.",
+                        max_tokens=subsection_word_limit * 2,  # Allow some extra tokens for HTML
+                        system="You are an expert content writer focused on creating specific, useful subsection content.",
                         messages=[
                             {"role": "user", "content": f"""
-                                Write concise, engaging content for this subsection about "{keyword}": {h3} (under main section {h2})
+                                Write concise, specific content for this subsection about "{keyword}": {h3} (under main section {h2})
                                 
                                 Requirements:
                                 1. Include ONLY highly relevant, specific information
@@ -3414,7 +3517,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             
             conclusion_response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=conclusion_word_limit * 2,
+                max_tokens=conclusion_word_limit * 2,  # Allow some extra tokens for HTML
                 system="You are an expert at writing concise, impactful conclusions that avoid repetition.",
                 messages=[
                     {"role": "user", "content": f"""
