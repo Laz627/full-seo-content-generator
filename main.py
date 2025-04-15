@@ -1363,7 +1363,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                      serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
                      anthropic_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
     """
-    Generate comprehensive article with natural language flow and balanced keyword usage.
+    Generate concise, targeted article with natural language flow and balanced keyword usage.
     If guidance_only is True, will generate writing guidance instead of full content.
     Uses Claude 3.7 Sonnet to optimize for important terms and proper length.
     Returns: article_content, success_status
@@ -1467,18 +1467,16 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             # Generate writing guidance for the entire article
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=7000,
-                system="You are an expert SEO content strategist who provides detailed writing guidance.",
+                max_tokens=4000,
+                system="You are an expert SEO content strategist who provides concise, focused writing guidance.",
                 messages=[
                     {"role": "user", "content": f"""
-                    Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
+                    Create concise writing guidance for an article about "{keyword}" following the semantic structure below.
                     
                     For each section (H1, H2s, and H3s), provide:
                     1. The key points to cover
-                    2. Relevant statistics or data to mention (if applicable)
-                    3. Tone and approach recommendations
-                    4. Specific keywords to include
-                    5. Approximate word count target
+                    2. Specific keywords to include
+                    3. Approximate word count target
                     
                     Use this semantic structure:
                     H1: {h1}
@@ -1505,11 +1503,10 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     {topics_str}
                     
                     WRITING STYLE GUIDANCE:
+                    - Be extremely concise - the final article should be 1,200-1,500 words MAXIMUM
                     - Use a conversational, engaging tone
                     - Vary sentence structure to maintain reader interest
                     - Use transitional phrases between paragraphs and sections
-                    - Create smooth connections between topics
-                    - Balance informative content with a friendly, accessible approach
                     
                     Format the guidance with proper HTML:
                     - Main title in <h1> tags
@@ -1518,9 +1515,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
                     
-                    Treat this article as a cohesive whole, not just a collection of separate sections. Consider how sections flow together and reference each other throughout the guidance.
-                    
-                    Aim for comprehensive guidance that will help a writer create a 1,200-1,500 word article.
+                    Keep the guidance brief and practical, focused on creating a concise 1,200-1,500 word article.
                     """}
                 ],
                 temperature=0.5
@@ -1529,23 +1524,23 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # Generate full article with comprehensive structure and natural flow
+            # Generate concise article with strict word count enforcement
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=7000,  # Increased max_tokens for full article generation
-                system="""You are an expert content writer who creates engaging, flowing articles.
-                Your writing stands out for its natural conversational tone and smooth transitions between ideas.
+                max_tokens=5000,  # Reduced to encourage brevity
+                system="""You are an expert content writer who creates concise, high-impact articles.
+                You excel at conveying maximum value in minimal word count.
                 
                 Your writing principles:
-                1. Write in a natural, conversational style that flows easily
-                2. Create smooth transitions between sentences, paragraphs, and sections
-                3. Balance informative content with engaging language
-                4. Use varied sentence structures to maintain reader interest
-                5. Integrate keywords naturally without disrupting the flow""",
+                1. Be extremely concise while maintaining substance
+                2. Write short, impactful paragraphs (2-3 sentences)
+                3. Cover all required points briefly
+                4. Never exceed the specified word count limit
+                5. Focus on quality over quantity""",
                 
                 messages=[
                     {"role": "user", "content": f"""
-                    Write an engaging, flowing article about "{keyword}" covering all the sections outlined below.
+                    Write a CONCISE article about "{keyword}" covering the sections outlined below.
                     
                     Use this semantic structure:
                     H1: {h1}
@@ -1553,25 +1548,22 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Sections:
                     {sections_str}
                     
-                    CRITICAL CONTENT STRUCTURE REQUIREMENTS:
-                    1. After the H1 title, write an introduction (150-200 words)
-                    2. For EACH H2 section:
-                       - Add 150-200 words of content DIRECTLY under the H2 heading BEFORE any H3 subsections
-                       - Then include any H3 subsections with their own content (100-150 words each)
-                    3. After all sections, end with a conclusion (100-150 words)
+                    ⚠️ CRITICAL WORD COUNT LIMIT ⚠️
+                    This article MUST be between 1,200-1,500 words TOTAL. This is ABSOLUTELY MANDATORY.
+                    Do not exceed 1,500 words under any circumstances.
                     
-                    LENGTH REQUIREMENTS:
-                    - Total article: 1,200-1,500 words
-                    - Paragraphs: 2-3 sentences each, varying length for natural flow
+                    SECTION LENGTH GUIDELINES:
+                    - Introduction: 100-150 words
+                    - Each H2 section: 100-150 words TOTAL before any H3 subsections
+                    - Each H3 subsection: 80-100 words MAXIMUM
+                    - Conclusion: 80-100 words
                     
-                    WRITING STYLE REQUIREMENTS:
-                    - Use a conversational, personable tone throughout
-                    - Create smooth transitions between paragraphs and sections
-                    - Vary sentence structure (mix short, punchy sentences with longer ones)
-                    - Use transitional phrases like "Additionally," "Furthermore," "However," "On the other hand"
-                    - Connect ideas across sections when relevant
-                    - Use concrete examples to illustrate points
-                    - Address the reader directly using "you" where appropriate
+                    WRITING APPROACH:
+                    - Be extremely concise but informative
+                    - Write in a conversational, flowing style
+                    - Use short paragraphs (2-3 sentences)
+                    - Create smooth transitions between ideas
+                    - Vary sentence structure
                     
                     SEO REQUIREMENTS:
                     Primary terms to include:
@@ -1583,23 +1575,53 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     Topics to cover:
                     {topics_str}
                     
-                    Questions to address:
-                    {paa_str}
-                    
                     Format the article with proper HTML:
                     - Main title in <h1> tags
                     - Section headings in <h2> tags
                     - Subsection headings in <h3> tags
                     - Paragraphs in <p> tags
-                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                    - Use <ul>, <li> for bullet points
                     
-                    REMEMBER: This should read like a naturally flowing article written by a human, not a stiff, formulaic piece. The goal is engaging content that provides value while maintaining SEO benefits.
+                    REMEMBER: BREVITY IS ESSENTIAL - Keep the total word count between 1,200-1,500 words.
+                    
+                    Before submitting your response, count the total words and ensure you haven't exceeded 1,500 words.
+                    If you have, edit your content to fit within the word limit.
                     """}
                 ],
-                temperature=0.7  # Higher temperature for more natural language variation
+                temperature=0.5
             )
             
             article_content = response.content[0].text
+            
+            # Check if the content might be too long and if so, send another request to condense it
+            words = len(re.findall(r'\b\w+\b', article_content))
+            if words > 1600:  # Allow a small buffer over 1,500
+                try:
+                    condense_response = client.messages.create(
+                        model="claude-3-7-sonnet-20250219",
+                        max_tokens=5000,
+                        system="You are an expert editor who condenses content while preserving key information.",
+                        messages=[
+                            {"role": "user", "content": f"""
+                            This article is too long (approximately {words} words). Edit it to be between 1,200-1,500 words MAXIMUM while preserving all key information and the HTML structure.
+                            
+                            Focus on:
+                            1. Removing redundant phrases
+                            2. Shortening verbose descriptions
+                            3. Making each paragraph more concise
+                            4. Keeping all headings and key points
+                            
+                            Original article:
+                            {article_content}
+                            """}
+                        ],
+                        temperature=0.3
+                    )
+                    article_content = condense_response.content[0].text
+                except Exception as e:
+                    # If condensing fails, return the original but log the issue
+                    logger.warning(f"Failed to condense oversized article: {e}")
+            
             return article_content, True
     
     except Exception as e:
