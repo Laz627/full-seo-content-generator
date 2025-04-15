@@ -1449,14 +1449,9 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
                     {"role": "user", "content": f"""
-                    Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
+                    Create writing guidance for an article about "{keyword}" following the semantic structure below.
                     
-                    For each section (H1, H2s, and H3s), provide:
-                    1. The key points to cover
-                    2. Relevant statistics or data to mention (if applicable)
-                    3. Tone and approach recommendations
-                    4. Specific keywords to include
-                    5. Approximate word count target
+                    For each section (H1, H2s, and H3s), provide only general direction for what the section should contain.
                     
                     Use this semantic structure:
                     H1: {h1}
@@ -1466,16 +1461,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     
                     Content context:
                     - Main keyword: {keyword}
-                    - Related keywords to incorporate: {related_kw_str}
-                    - Optimize for these SERP features: {serp_features_str}
                     - Questions to address: {paa_str}
-                    
-                    Important terms to include:
-                    Primary terms (use these multiple times):
-                    {primary_terms_str}
-                    
-                    Secondary terms (try to include these at least once):
-                    {secondary_terms_str}
                     
                     Format the guidance with proper HTML:
                     - Main title in <h1> tags
@@ -1484,7 +1470,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Guidance points in <p> tags
                     - Use <ul>, <li> for bullet points
                     
-                    Aim for comprehensive guidance that will help a writer create a 1,200-1,500 word article.
+                    NOTE: Do NOT include recommended word count, keywords to include, statistics, or tone of voice. Just provide general direction for what the section should contain.
                     """}
                 ],
                 temperature=0.5
@@ -2128,17 +2114,6 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 component_para.add_run(f"{component_name}: ").bold = True
                 component_para.add_run(f"{value}")
         
-        # Section 5: Semantic Structure
-        doc.add_heading('Recommended Content Structure', level=1)
-        
-        doc.add_paragraph(f"Recommended H1: {semantic_structure.get('h1', '')}")
-        
-        for i, section in enumerate(semantic_structure.get('sections', []), 1):
-            doc.add_paragraph(f"H2 Section {i}: {section.get('h2', '')}")
-            
-            for j, subsection in enumerate(section.get('subsections', []), 1):
-                doc.add_paragraph(f"    H3 Subsection {j}: {subsection.get('h3', '')}")
-        
         # Section 6: Generated Article or Guidance
         doc.add_heading('Generated Article Content', level=1)
         
@@ -2232,6 +2207,12 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     
                     if heading_text:
+                        # Use the format "H2: Subhead" or "H3: Subhead" as requested
+                        if level == 2:
+                            heading_text = f"H2: {heading_text}"
+                        elif level == 3:
+                            heading_text = f"H3: {heading_text}"
+                        
                         doc.add_heading(heading_text, level=level)
                         # Reset list state
                         in_ul = False
@@ -2260,6 +2241,8 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h2_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     if heading_text:
+                        # Use the format "H2: Subhead" as requested
+                        heading_text = f"H2: {heading_text}"
                         doc.add_heading(heading_text, level=2)
                         # Reset list state
                         in_ul = False
@@ -2268,6 +2251,8 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h3_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     if heading_text:
+                        # Use the format "H3: Subhead" as requested
+                        heading_text = f"H3: {heading_text}"
                         doc.add_heading(heading_text, level=3)
                         # Reset list state
                         in_ul = False
@@ -2276,6 +2261,8 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h4_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     if heading_text:
+                        # Use the format "H4: Subhead" as requested
+                        heading_text = f"H4: {heading_text}"
                         doc.add_heading(heading_text, level=4)
                         # Reset list state
                         in_ul = False
@@ -2284,6 +2271,8 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h5_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     if heading_text:
+                        # Use the format "H5: Subhead" as requested
+                        heading_text = f"H5: {heading_text}"
                         doc.add_heading(heading_text, level=5)
                         # Reset list state
                         in_ul = False
@@ -2292,6 +2281,8 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                     heading_text = h6_match.group(1)
                     heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
                     if heading_text:
+                        # Use the format "H6: Subhead" as requested
+                        heading_text = f"H6: {heading_text}"
                         doc.add_heading(heading_text, level=6)
                         # Reset list state
                         in_ul = False
@@ -2960,12 +2951,14 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
             for revision in content_gaps.get('revised_headings', []):
                 row_cells = table.add_row().cells
                 
-                # Current heading
-                row_cells[0].text = revision.get('original', '')
+                # Current heading with strikethrough and gray color
+                current_heading = row_cells[0].paragraphs[0].add_run(revision.get('original', ''))
+                current_heading.font.strike = True
+                current_heading.font.color.rgb = RGBColor(128, 128, 128)  # Gray
                 
                 # Recommended heading in red
                 recommended_heading = row_cells[1].paragraphs[0].add_run(revision.get('suggested', ''))
-                recommended_heading.font.color.rgb = RGBColor(255, 0, 0)
+                recommended_heading.font.color.rgb = RGBColor(255, 0, 0)  # Red
                 
                 # Rationale
                 row_cells[2].text = revision.get('reason', '')
@@ -2986,7 +2979,9 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 # Make H3 or H4 for better document structure
                 actual_level = min(heading_level + 1, 3)
                 heading_para = doc.add_heading(heading_text, level=actual_level)
-                heading_para.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Use orange color for new additions
+                heading_para.runs[0].font.color.rgb = RGBColor(255, 165, 0)  # Orange
                 
                 # Where to insert
                 position_para = doc.add_paragraph()
@@ -2997,7 +2992,8 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 if heading.get('suggested_content'):
                     content_para = doc.add_paragraph()
                     content_para.add_run("Content to include: ").bold = True
-                    content_para.add_run(heading.get('suggested_content', ''))
+                    content_suggestion_run = content_para.add_run(heading.get('suggested_content', ''))
+                    content_suggestion_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange for new content
                 
                 doc.add_paragraph()  # Add spacing
         
@@ -3014,7 +3010,7 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 
                 for gap in content_gaps.get('content_gaps', []):
                     topic_heading = doc.add_heading(gap.get('topic', ''), 3)
-                    topic_heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                    topic_heading.runs[0].font.color.rgb = RGBColor(255, 165, 0)  # Orange for new content
                     
                     issue_para = doc.add_paragraph()
                     issue_para.add_run("Gap: ").bold = True
@@ -3023,7 +3019,8 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                     if gap.get('suggested_content'):
                         content_para = doc.add_paragraph()
                         content_para.add_run("Suggested Content: ").bold = True
-                        content_para.add_run(gap.get('suggested_content', ''))
+                        content_suggestion_run = content_para.add_run(gap.get('suggested_content', ''))
+                        content_suggestion_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange for new content
                     
                     doc.add_paragraph()  # Add spacing
             
@@ -3044,7 +3041,8 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                     if area.get('suggested_content'):
                         content_para = doc.add_paragraph()
                         content_para.add_run("Content to add: ").bold = True
-                        content_para.add_run(area.get('suggested_content', ''))
+                        content_suggestion_run = content_para.add_run(area.get('suggested_content', ''))
+                        content_suggestion_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange for new content
                     
                     doc.add_paragraph()  # Add spacing
         
@@ -3055,7 +3053,7 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
             paa_intro = doc.add_paragraph()
             paa_intro.add_run("Incorporate answers to these common questions to improve your content's search relevance:")
             
-            for question in content_gaps.get('unanswered_questions', []):
+            for question in content_gaps.get('unanswered_questions'):
                 q_para = doc.add_paragraph()
                 q_para.add_run("Question: ").bold = True
                 q_text = q_para.add_run(question.get('question', ''))
@@ -3069,7 +3067,8 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
                 if question.get('suggested_answer'):
                     answer_para = doc.add_paragraph()
                     answer_para.add_run("Suggested answer: ").bold = True
-                    answer_para.add_run(question.get('suggested_answer', ''))
+                    answer_run = answer_para.add_run(question.get('suggested_answer', ''))
+                    answer_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange for new content
                 
                 doc.add_paragraph()  # Add spacing
                 
@@ -3266,6 +3265,15 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 )
                 
                 new_section_content = section_content_response.content[0].text
+                
+                # Apply orange color for new content
+                new_section_content = re.sub(
+                    r'(<p>)(.*?)(</p>)',
+                    r'<p style="color: rgb(255, 165, 0);">\2</p>',
+                    new_section_content,
+                    flags=re.DOTALL
+                )
+                
                 optimized_sections.append(new_section_content)
                 
                 # Estimate added word count
@@ -3338,6 +3346,14 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     if matching_heading != h2:
                         structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
                 
+                # Apply red color for modified content
+                enhanced_content = re.sub(
+                    r'(<p>)(.*?)(</p>)',
+                    r'<p style="color: rgb(255, 0, 0);">\2</p>',
+                    enhanced_content,
+                    flags=re.DOTALL
+                )
+                
                 optimized_sections.append(enhanced_content)
                 
                 # Estimate added word count
@@ -3384,6 +3400,15 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     )
                     
                     subsection_content = subsection_content_response.content[0].text
+                    
+                    # Apply orange color for new content
+                    subsection_content = re.sub(
+                        r'(<p>)(.*?)(</p>)',
+                        r'<p style="color: rgb(255, 165, 0);">\2</p>',
+                        subsection_content,
+                        flags=re.DOTALL
+                    )
+                    
                     optimized_sections.append(subsection_content)
                     
                     # Estimate added word count
@@ -3421,6 +3446,15 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             )
             
             conclusion_content = conclusion_response.content[0].text
+            
+            # Apply orange color for new content
+            conclusion_content = re.sub(
+                r'(<p>)(.*?)(</p>)',
+                r'<p style="color: rgb(255, 165, 0);">\2</p>',
+                conclusion_content,
+                flags=re.DOTALL
+            )
+            
             optimized_sections.append(conclusion_content)
         
         # Create final document with change summary
@@ -3453,6 +3487,13 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 {"".join(f"<li>{improvement}</li>" for improvement in content_improvements[:5])}
                 {f"<li>Plus {len(content_improvements) - 5} additional content improvements</li>" if len(content_improvements) > 5 else ""}
             </ul>
+            
+            <h3>Color Legend:</h3>
+            <ul>
+                <li><span style="color: red;">Red text</span>: Modified or changed content</li>
+                <li><span style="color: orange;">Orange text</span>: New additions</li>
+                <li><span style="text-decoration: line-through; color: gray;">Gray strikethrough</span>: Deleted elements (shown in Word document)</li>
+            </ul>
         </div>
         """
         
@@ -3467,7 +3508,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
 def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "", 
                                   score_data: Dict = None) -> BytesIO:
     """
-    Enhanced document creation with content score information
+    Enhanced document creation with content score information and colored text based on change types
     Returns: document_stream
     """
     try:
@@ -3522,15 +3563,38 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
             # Parse HTML summary
             summary_soup = BeautifulSoup(change_summary, 'html.parser')
             
+            # Add color legend
+            legend_para = doc.add_paragraph()
+            legend_para.add_run("Color Legend:").bold = True
+            
+            legend_items = [
+                ("Red text", "Modified or changed content", RGBColor(255, 0, 0)),
+                ("Orange text", "New additions", RGBColor(255, 165, 0)),
+                ("Gray strikethrough", "Deleted elements", RGBColor(128, 128, 128))
+            ]
+            
+            for title, desc, color in legend_items:
+                item_para = doc.add_paragraph(style='List Bullet')
+                title_run = item_para.add_run(title + ": ")
+                title_run.bold = True
+                title_run.font.color.rgb = color
+                
+                # Add strikethrough for deleted items
+                if "strikethrough" in title.lower():
+                    title_run.font.strike = True
+                
+                item_para.add_run(desc)
+            
             # Extract key points
             for h3 in summary_soup.find_all('h3'):
-                doc.add_heading(h3.get_text(), 2)
-                
-                # Get the list that follows this heading
-                ul = h3.find_next('ul')
-                if ul:
-                    for li in ul.find_all('li'):
-                        doc.add_paragraph(li.get_text(), style='List Bullet')
+                if "Color Legend" not in h3.get_text():  # Skip the legend as we added it differently
+                    doc.add_heading(h3.get_text(), 2)
+                    
+                    # Get the list that follows this heading
+                    ul = h3.find_next('ul')
+                    if ul:
+                        for li in ul.find_all('li'):
+                            doc.add_paragraph(li.get_text(), style='List Bullet')
             
             # Add separator before main content
             doc.add_paragraph()
@@ -3540,246 +3604,124 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add content heading
         doc.add_heading("Optimized Content", 1)
         
-        # IMPROVED: Line-by-line processing with better markdown heading detection
-        if html_content and isinstance(html_content, str):
-            # Split the content by lines
-            lines = html_content.split('\n')
-            
-            # Initialize list tracking
-            in_ul = False
-            in_ol = False
-            
-            # Helper function to process paragraph or list item text with styling
-            def add_styled_text(doc_element, text):
-                """Add text with inline styling to a paragraph or list item"""
-                # Process different types of formatting tags
-                bold_segments = re.finditer(r'<(strong|b)>(.*?)</\1>', text, re.IGNORECASE)
-                italic_segments = re.finditer(r'<(em|i)>(.*?)</\1>', text, re.IGNORECASE)
-                
-                # First, replace styled segments with markers
-                placeholders = {}
-                placeholder_id = 0
-                
-                # Process bold segments
-                for match in bold_segments:
-                    placeholder = f"__BOLD_{placeholder_id}__"
-                    placeholders[placeholder] = {'type': 'bold', 'text': match.group(2)}
-                    text = text.replace(match.group(0), placeholder, 1)
-                    placeholder_id += 1
-                
-                # Process italic segments
-                for match in italic_segments:
-                    placeholder = f"__ITALIC_{placeholder_id}__"
-                    placeholders[placeholder] = {'type': 'italic', 'text': match.group(2)}
-                    text = text.replace(match.group(0), placeholder, 1)
-                    placeholder_id += 1
-                
-                # Remove any remaining HTML tags
-                clean_text = re.sub(r'<[^>]+>', '', text)
-                
-                # Split by placeholders to find plain text segments
-                segments = []
-                last_end = 0
-                for match in re.finditer(r'__(BOLD|ITALIC)_\d+__', clean_text):
-                    # Add plain text before the placeholder
-                    if match.start() > last_end:
-                        segments.append({
-                            'type': 'plain',
-                            'text': clean_text[last_end:match.start()]
-                        })
-                    
-                    # Add the placeholder
-                    segments.append(placeholders[match.group(0)])
-                    last_end = match.end()
-                
-                # Add remaining plain text
-                if last_end < len(clean_text):
-                    segments.append({
-                        'type': 'plain',
-                        'text': clean_text[last_end:]
-                    })
-                
-                # Add each segment to the document element
-                for segment in segments:
-                    if not segment['text'].strip():
-                        continue
-                        
-                    if segment['type'] == 'plain':
-                        doc_element.add_run(segment['text'])
-                    elif segment['type'] == 'bold':
-                        run = doc_element.add_run(segment['text'])
-                        run.bold = True
-                    elif segment['type'] == 'italic':
-                        run = doc_element.add_run(segment['text'])
-                        run.italic = True
-            
-            # Process each line
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # First check for markdown headings
-                markdown_heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
-                if markdown_heading_match:
-                    # Count number of # symbols to determine heading level
-                    level = len(markdown_heading_match.group(1))
-                    heading_text = markdown_heading_match.group(2).strip()
-                    
-                    # Remove any HTML tags from the heading
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=level)
-                        # Style the heading based on level
-                        if level == 1:
-                            heading.runs[0].font.size = Pt(16)
-                        elif level == 2:
-                            heading.runs[0].font.size = Pt(14)
-                        elif level == 3:
-                            heading.runs[0].font.size = Pt(12)
-                            heading.runs[0].italic = True
-                        elif level >= 4:
-                            heading.runs[0].font.size = Pt(10)
-                            heading.runs[0].italic = True
-                        
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                    continue
-                
-                # Check if this line is an HTML heading tag
-                h1_match = re.match(r'^<h1[^>]*>(.*?)</h1>$', line, re.IGNORECASE)
-                h2_match = re.match(r'^<h2[^>]*>(.*?)</h2>$', line, re.IGNORECASE)
-                h3_match = re.match(r'^<h3[^>]*>(.*?)</h3>$', line, re.IGNORECASE)
-                h4_match = re.match(r'^<h4[^>]*>(.*?)</h4>$', line, re.IGNORECASE)
-                h5_match = re.match(r'^<h5[^>]*>(.*?)</h5>$', line, re.IGNORECASE)
-                h6_match = re.match(r'^<h6[^>]*>(.*?)</h6>$', line, re.IGNORECASE)
-                
-                # Process heading matches
-                if h1_match:
-                    heading_text = h1_match.group(1)
-                    # Remove any HTML tags inside the heading
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=1)
-                        heading.runs[0].font.size = Pt(16)
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                elif h2_match:
-                    heading_text = h2_match.group(1)
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=2)
-                        heading.runs[0].font.size = Pt(14)
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                elif h3_match:
-                    heading_text = h3_match.group(1)
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=3)
-                        heading.runs[0].font.size = Pt(12)
-                        heading.runs[0].italic = True
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                elif h4_match:
-                    heading_text = h4_match.group(1)
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=4)
-                        heading.runs[0].font.size = Pt(11)
-                        heading.runs[0].italic = True
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                elif h5_match:
-                    heading_text = h5_match.group(1)
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=5)
-                        heading.runs[0].font.size = Pt(10)
-                        heading.runs[0].italic = True
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                elif h6_match:
-                    heading_text = h6_match.group(1)
-                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
-                    if heading_text:
-                        heading = doc.add_heading(heading_text, level=6)
-                        heading.runs[0].font.size = Pt(10)
-                        heading.runs[0].italic = True
-                        # Reset list state
-                        in_ul = False
-                        in_ol = False
-                
-                # Check for list starts and ends
-                elif re.match(r'^<ul[^>]*>', line, re.IGNORECASE):
-                    in_ul = True
-                    in_ol = False
-                elif re.match(r'^</ul>', line, re.IGNORECASE):
-                    in_ul = False
-                elif re.match(r'^<ol[^>]*>', line, re.IGNORECASE):
-                    in_ol = True
-                    in_ul = False
-                elif re.match(r'^</ol>', line, re.IGNORECASE):
-                    in_ol = False
-                
-                # Check if this line is a list item
-                elif re.match(r'^<li[^>]*>', line, re.IGNORECASE) and '</li>' in line.lower():
-                    # Extract list item content
-                    li_match = re.match(r'^<li[^>]*>(.*?)</li>$', line, re.IGNORECASE)
-                    if li_match:
-                        li_text = li_match.group(1)
-                        if li_text.strip():
-                            if in_ol:
-                                list_para = doc.add_paragraph(style='List Number')
-                                add_styled_text(list_para, li_text)
-                            else:  # Default to bullet if we're not sure
-                                list_para = doc.add_paragraph(style='List Bullet')
-                                add_styled_text(list_para, li_text)
-                
-                # Check if this line is a paragraph tag
-                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
-                    # Extract paragraph content
-                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
-                    if para_match:
-                        para_text = para_match.group(1)
-                        if para_text.strip():
-                            para = doc.add_paragraph()
-                            add_styled_text(para, para_text)
-                
-                # Check for markdown bullet points
-                elif line.startswith('* ') or line.startswith('- '):
-                    bullet_text = line[2:].strip()
-                    if bullet_text:
-                        bullet_para = doc.add_paragraph(style='List Bullet')
-                        add_styled_text(bullet_para, bullet_text)
-                
-                # Check for markdown numbered list
-                elif re.match(r'^\d+\.\s', line):
-                    num_text = re.sub(r'^\d+\.\s', '', line).strip()
-                    if num_text:
-                        num_para = doc.add_paragraph(style='List Number')
-                        add_styled_text(num_para, num_text)
-                
-                # If it's plain text (not starting with a tag), add as paragraph
-                elif not line.startswith('<'):
-                    para = doc.add_paragraph()
-                    para.add_run(line)
-                
-                # Otherwise, try to extract clean text from HTML
-                else:
-                    # Clean HTML tags and add as paragraph if content exists
-                    clean_text = re.sub(r'<[^>]+>', '', line).strip()
-                    if clean_text:
-                        para = doc.add_paragraph()
-                        para.add_run(clean_text)
+        # Parse HTML to extract content with style information
+        soup = BeautifulSoup(html_content, 'html.parser')
         
+        # Process each element, respecting the color styling
+        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li']):
+            if element.name.startswith('h'):
+                # Get heading level
+                level = int(element.name[1])
+                heading_text = element.get_text().strip()
+                
+                # Create heading with appropriate formatting for H2/H3
+                if level == 2:
+                    heading_text = f"H2: {heading_text}"
+                elif level == 3:
+                    heading_text = f"H3: {heading_text}"
+                
+                heading = doc.add_heading(heading_text, level=level)
+                
+                # Apply color if the heading has a style attribute
+                if element.has_attr('style'):
+                    style = element['style']
+                    
+                    # Extract color information
+                    if 'color: rgb(255, 0, 0)' in style:
+                        # Red for modified content
+                        heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)
+                    elif 'color: rgb(255, 165, 0)' in style:
+                        # Orange for new additions
+                        heading.runs[0].font.color.rgb = RGBColor(255, 165, 0)
+                    elif 'color: rgb(128, 128, 128)' in style:
+                        # Gray strikethrough for deleted elements
+                        heading.runs[0].font.color.rgb = RGBColor(128, 128, 128)
+                        heading.runs[0].font.strike = True
+            
+            elif element.name == 'p':
+                # Create paragraph with colored text based on style attribute
+                paragraph = doc.add_paragraph()
+                text = element.get_text().strip()
+                
+                # Apply appropriate styling
+                if element.has_attr('style'):
+                    style = element['style']
+                    
+                    if 'color: rgb(255, 0, 0)' in style:
+                        # Red for modified content
+                        run = paragraph.add_run(text)
+                        run.font.color.rgb = RGBColor(255, 0, 0)
+                    elif 'color: rgb(255, 165, 0)' in style:
+                        # Orange for new additions
+                        run = paragraph.add_run(text)
+                        run.font.color.rgb = RGBColor(255, 165, 0)
+                    elif 'color: rgb(128, 128, 128)' in style:
+                        # Gray strikethrough for deleted elements
+                        run = paragraph.add_run(text)
+                        run.font.color.rgb = RGBColor(128, 128, 128)
+                        run.font.strike = True
+                    else:
+                        paragraph.add_run(text)
+                else:
+                    paragraph.add_run(text)
+            
+            # Handle lists
+            elif element.name == 'ul':
+                # Process bulleted list
+                for li in element.find_all('li', recursive=False):
+                    bullet_para = doc.add_paragraph(style='List Bullet')
+                    text = li.get_text().strip()
+                    
+                    # Apply appropriate styling
+                    if li.has_attr('style'):
+                        style = li['style']
+                        
+                        if 'color: rgb(255, 0, 0)' in style:
+                            # Red for modified content
+                            run = bullet_para.add_run(text)
+                            run.font.color.rgb = RGBColor(255, 0, 0)
+                        elif 'color: rgb(255, 165, 0)' in style:
+                            # Orange for new additions
+                            run = bullet_para.add_run(text)
+                            run.font.color.rgb = RGBColor(255, 165, 0)
+                        elif 'color: rgb(128, 128, 128)' in style:
+                            # Gray strikethrough for deleted elements
+                            run = bullet_para.add_run(text)
+                            run.font.color.rgb = RGBColor(128, 128, 128)
+                            run.font.strike = True
+                        else:
+                            bullet_para.add_run(text)
+                    else:
+                        bullet_para.add_run(text)
+            
+            elif element.name == 'ol':
+                # Process numbered list
+                for i, li in enumerate(element.find_all('li', recursive=False), 1):
+                    num_para = doc.add_paragraph(style='List Number')
+                    text = li.get_text().strip()
+                    
+                    # Apply appropriate styling
+                    if li.has_attr('style'):
+                        style = li['style']
+                        
+                        if 'color: rgb(255, 0, 0)' in style:
+                            # Red for modified content
+                            run = num_para.add_run(text)
+                            run.font.color.rgb = RGBColor(255, 0, 0)
+                        elif 'color: rgb(255, 165, 0)' in style:
+                            # Orange for new additions
+                            run = num_para.add_run(text)
+                            run.font.color.rgb = RGBColor(255, 165, 0)
+                        elif 'color: rgb(128, 128, 128)' in style:
+                            # Gray strikethrough for deleted elements
+                            run = num_para.add_run(text)
+                            run.font.color.rgb = RGBColor(128, 128, 128)
+                            run.font.strike = True
+                        else:
+                            num_para.add_run(text)
+                    else:
+                        num_para.add_run(text)
+                        
         # Save document to memory stream
         doc_stream = BytesIO()
         doc.save(doc_stream)
