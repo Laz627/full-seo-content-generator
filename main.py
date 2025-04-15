@@ -1408,8 +1408,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                 if question and isinstance(question, dict) and 'question' in question:
                     paa_str += f"{i}. {question.get('question', '')}\n"
         
-        # IMPROVED: Better format for primary and secondary terms with their recommended usage
-        # LIMIT to fewer terms to prevent overloading
+        # Format primary and secondary terms
         primary_terms_with_usage = []
         if term_data and 'primary_terms' in term_data:
             for term_info in term_data.get('primary_terms', [])[:5]:  # LIMIT to top 5 primary terms
@@ -1430,7 +1429,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         
         primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
         
-        # IMPROVED: Better format for secondary terms - LIMIT to fewer terms
+        # Format for secondary terms
         secondary_terms_list = []
         if term_data and 'secondary_terms' in term_data:
             for term_info in term_data.get('secondary_terms', [])[:8]:  # LIMIT to top 8 secondary terms
@@ -1473,81 +1472,75 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     NOTE: Do NOT include recommended word count, keywords to include, statistics, or tone of voice. Just provide general direction for what the section should contain.
                     """}
                 ],
-                temperature=0.5
+                temperature=0.7  # Increased for more diversity
             )
             
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # SIGNIFICANTLY IMPROVED: Increased max_tokens, keep structure instructions
+            # Full article generation with anti-repetition measures
             response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
-                max_tokens=6000,  # INCREASED max_tokens to ensure full article generation
-                system="""You are an expert content writer who creates concise, structured articles.
-                You are known for completing articles within the specified word count while covering all requested sections.
+                max_tokens=6000,
+                system="""You are an expert content writer who creates engaging, informative articles.
+                Your writing is known for being concise, varied, and non-repetitive.
                 
                 Your writing principles:
-                1. Write extremely concise paragraphs (2-3 sentences each)
-                2. Use clear headings for organization (H1, H2, H3, H4)
-                3. Cover all requested sections briefly rather than some sections in depth
-                4. Integrate required SEO terms naturally throughout the article
-                5. Prioritize completeness over depth""",
+                1. Create diverse content across sections - each section should have a unique approach and information
+                2. Use varied vocabulary and sentence structures
+                3. Never repeat the same phrases or points across different sections
+                4. Each paragraph should contain unique information
+                5. Ensure seamless flow between sections
+                6. Avoid formulaic writing and generic statements""",
                 
                 messages=[
                     {"role": "user", "content": f"""
-                    Write a concise article about "{keyword}" that covers ALL the sections outlined below.
+                    Write an engaging, non-repetitive article about "{keyword}" following the structure below.
                     
                     Use this semantic structure:
                     H1: {h1}
                     
-                    Sections to include (YOU MUST INCLUDE ALL SECTIONS LISTED - this is critical):
+                    Sections to include:
                     {sections_str}
                     
-                    STRICT LENGTH REQUIREMENTS:
-                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words maximum (STRICTLY ENFORCE THIS)
-                    2. PARAGRAPH LENGTH: Each paragraph must be only 2-3 sentences (VERY IMPORTANT)
+                    ARTICLE REQUIREMENTS:
+                    1. TOTAL LENGTH: 1,200-1,500 words maximum
+                    2. VARIETY: Each section must have a unique approach and perspective
+                    3. NO REPETITION: Never repeat the same points, phrases, or sentence structures across sections
                     
-                    SECTION WORD COUNTS (to ensure completeness):
-                    - Introduction: 100-150 words
-                    - Each H2 section: 75-100 words maximum
-                    - Each H3 subsection: 50-75 words maximum
-                    - Each H4 subsection: 25-50 words maximum
-                    - Conclusion: 100 words maximum
+                    WRITING GUIDELINES:
+                    - Each section should have its own distinct voice and approach
+                    - Vary paragraph length (2-4 sentences per paragraph)
+                    - Use diverse transitional phrases between paragraphs and sections
+                    - Employ a mix of explanatory, descriptive, and actionable content
+                    - Ensure each section provides unique value to the reader
                     
-                    CONTENT STRUCTURE:
-                    1. Start with a brief introduction
-                    2. Include ALL the H2 sections listed above (crucial)
-                    3. Include ALL H3 subsections listed under each H2 (crucial)
-                    4. Add H4 subheadings where helpful for organization
-                    5. End with a brief conclusion
+                    CRITICAL ANTI-REPETITION INSTRUCTIONS:
+                    1. DO NOT use the same sentence structures repeatedly
+                    2. DO NOT repeat the same information in different sections
+                    3. DO NOT use formulaic writing (e.g., "In this section, we will discuss...")
+                    4. VARY your vocabulary throughout the article
+                    5. ENSURE each paragraph provides new information
                     
-                    CRITICAL SEO REQUIREMENTS:
-                    Primary terms to include (with exact usage count):
+                    SEO REQUIREMENTS:
+                    Primary terms to include (distributed naturally throughout):
                     {primary_terms_str}
                     
                     Secondary terms to include (at least once each):
                     {secondary_terms_str}
                     
-                    Address these questions briefly within the content:
+                    Address these questions within the content:
                     {paa_str}
-                    
-                    CRITICAL WRITING INSTRUCTIONS:
-                    1. DO NOT use rhetorical questions
-                    2. ENSURE every paragraph is only 2-3 sentences
-                    3. ENSURE all listed sections are included
-                    4. MAINTAIN STRICT TOTAL WORD COUNT of 1,200-1,500 words
-                    5. USE bullet points instead of long paragraphs for lists
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
                     - Section headings in <h2> tags
                     - Subsection headings in <h3> tags
-                    - Sub-subsection headings in <h4> tags
                     - Paragraphs in <p> tags
-                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                    - Use <ul>, <li> for bullet points
                     """}
                 ],
-                temperature=0.4  # Reduced temperature for more consistent output
+                temperature=0.7  # Increased for more creative, diverse output
             )
             
             article_content = response.content[0].text
