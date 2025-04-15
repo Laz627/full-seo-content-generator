@@ -3023,7 +3023,7 @@ def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword:
 def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
                               semantic_structure: Dict, related_keywords: List[Dict],
                               keyword: str, paa_questions: List[Dict], term_data: Dict,
-                              anthropic_api_key: str, openai_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
+                              anthropic_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
     """
     Enhanced article generation that incorporates term data and competitor content embeddings
     Returns: optimized_html_content, change_summary, success_status
@@ -3035,9 +3035,6 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         original_content = existing_content.get('full_text', '')
         existing_headings = existing_content.get('headings', [])
         
-        # Process competitor content with embeddings (keep this part)
-        # [embedding code remains the same]
-        
         # Get section text for each heading
         section_content = {}
         for i, heading in enumerate(existing_headings):
@@ -3046,10 +3043,10 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             section_text = "\n\n".join(paragraphs)
             section_content[heading_text] = section_text
         
-        # Process content sequentially to prevent repetition
+        # Process the content section by section
         optimized_sections = []
         
-        # Track changes
+        # Track changes by category
         structure_changes = []
         content_additions = []
         content_improvements = []
@@ -3061,8 +3058,35 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
         optimized_sections.append(f"<h1>{h1}</h1>")
         
+        # Track word count
+        current_word_count = len(h1.split())
+        
         # Track processed headings
         processed_headings = set()
+        
+        # Prepare important terms data
+        primary_terms_str = ""
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = []
+            for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                usage = term_info.get('recommended_usage', 1)
+                if term:
+                    primary_terms.append(f"{term} (importance: {importance:.2f}, usage: {usage})")
+            
+            primary_terms_str = "\n".join(primary_terms)
+        
+        secondary_terms_str = ""
+        if term_data and 'secondary_terms' in term_data:
+            secondary_terms = []
+            for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                if term and importance > 0.5:
+                    secondary_terms.append(f"{term} (importance: {importance:.2f})")
+            
+            secondary_terms_str = "\n".join(secondary_terms)
         
         # For each recommended section in the new structure
         for section in semantic_structure.get('sections', []):
@@ -3070,10 +3094,11 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             if not h2:
                 continue
                 
-            # Add section heading
-            optimized_sections.append(f"<h2>{h2}</h2>")
-            
-            # Find matching original heading
+            # Skip sections if we're already approaching the target word count
+            if current_word_count > (target_word_count * 0.85):
+                break
+                
+            # Find most relevant original heading for this section
             matching_response = client.messages.create(
                 model="claude-3-7-sonnet-20250219",
                 max_tokens=50,
@@ -3094,6 +3119,18 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             )
             
             matching_heading = matching_response.content[0].text.strip()
+            optimized_sections.append(f"<h2>{h2}</h2>")
+            current_word_count += len(h2.split())
+            
+            # Calculate words available for this section and its subsections
+            subsection_count = len(section.get('subsections', []))
+            # If there are subsections, allocate 60% to the main section and 40% to subsections
+            if subsection_count > 0:
+                section_word_limit = int(words_per_section * 0.6)
+                subsection_word_limit = int((words_per_section * 0.4) / subsection_count)
+            else:
+                section_word_limit = words_per_section
+                subsection_word_limit = 0
             
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new simple section
@@ -3325,15 +3362,25 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Add horizontal line
         doc.add_paragraph("_" * 50)
         
-        # Add content score if available
-        if score_data:
-            # (Score section code preserved)
-            pass
-        
         # Add change summary if provided
         if change_summary:
-            # (Change summary code preserved)
-            pass
+            doc.add_heading("Optimization Summary", 1)
+            
+            # Parse HTML summary
+            summary_soup = BeautifulSoup(change_summary, 'html.parser')
+            
+            # Extract key points
+            for h3 in summary_soup.find_all('h3'):
+                doc.add_heading(h3.get_text(), 2)
+                
+                # Get the list that follows this heading
+                ul = h3.find_next('ul')
+                if ul:
+                    for li in ul.find_all('li'):
+                        doc.add_paragraph(li.get_text(), style='List Bullet')
+            
+            # Add separator
+            doc.add_paragraph("_" * 50)
         
         # Add content heading
         doc.add_heading("Optimized Content", 1)
@@ -3341,75 +3388,115 @@ def create_word_document_from_html(html_content: str, keyword: str, change_summa
         # Parse the HTML content
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Process the document structure hierarchically
-        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol']):
-            tag_name = element.name
+        # Process each element sequentially
+        current_element = soup.find(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol'])
+        
+        while current_element:
+            tag_name = current_element.name
             
-            # Process headings with appropriate level
+            # Process headings
             if tag_name.startswith('h'):
                 heading_level = int(tag_name[1])
-                heading_text = element.get_text()
+                heading_text = current_element.get_text().strip()
                 
-                # Use the format "H2: Subhead" or "H3: Subhead" as requested for H2 and H3
+                # Format H2 and H3 headings with prefixes
                 if heading_level == 2:
                     heading_text = f"H2: {heading_text}"
                 elif heading_level == 3:
                     heading_text = f"H3: {heading_text}"
                 
+                # Add heading to document
                 heading = doc.add_heading(heading_text, level=heading_level)
                 
-                # Apply color formatting for headings
-                color_span = element.find('span', style=lambda s: s and 'color' in s)
-                if color_span:
-                    color_match = re.search(r'color:\s*([^;]+)', color_span.get('style', ''))
-                    if color_match:
-                        color_value = color_match.group(1).strip()
-                        if color_value == '#FF0000' or color_value == 'red':
-                            heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
-                        elif color_value == '#FF8C00' or color_value == 'orange':
-                            heading.runs[0].font.color.rgb = RGBColor(255, 140, 0)  # Orange
-                        elif color_value == '#808080' or color_value == 'gray':
-                            heading.runs[0].font.color.rgb = RGBColor(128, 128, 128)  # Gray
-                            heading.runs[0].font.strike = True
+                # Apply color if present
+                strikethrough = False
+                color_span = current_element.find('span')
+                
+                if color_span and 'style' in color_span.attrs:
+                    style = color_span['style']
+                    if 'color:#FF0000' in style or 'color:red' in style:
+                        heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                    elif 'color:#FF8C00' in style or 'color:orange' in style:
+                        heading.runs[0].font.color.rgb = RGBColor(255, 140, 0)  # Orange
+                    elif 'color:#808080' in style or 'color:gray' in style:
+                        heading.runs[0].font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                        strikethrough = True
+                    
+                    if 'text-decoration:line-through' in style:
+                        strikethrough = True
+                
+                if strikethrough:
+                    heading.runs[0].font.strike = True
             
-            # Process paragraphs with colored text
+            # Process paragraphs
             elif tag_name == 'p':
                 para = doc.add_paragraph()
                 
-                # Check if there's a span with color
-                spans = element.find_all('span', style=lambda s: s and 'color' in s)
+                # Check for spans with color
+                spans = current_element.find_all('span')
                 
                 if spans:
-                    # Process each span with its color
                     for span in spans:
+                        # Get span text
                         span_text = span.get_text()
                         if not span_text.strip():
                             continue
                         
-                        # Extract color from style
-                        color_match = re.search(r'color:\s*([^;]+)', span.get('style', ''))
-                        if color_match:
-                            color_value = color_match.group(1).strip()
-                            
-                            # Create a run with the right color
-                            run = para.add_run(span_text)
-                            
-                            # Set color based on value
-                            if color_value == '#FF0000' or color_value == 'red':
+                        run = para.add_run(span_text)
+                        
+                        # Apply color if present
+                        if 'style' in span.attrs:
+                            style = span['style']
+                            if 'color:#FF0000' in style or 'color:red' in style:
                                 run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                            elif color_value == '#FF8C00' or color_value == 'orange':
+                            elif 'color:#FF8C00' in style or 'color:orange' in style:
                                 run.font.color.rgb = RGBColor(255, 140, 0)  # Orange
-                            elif color_value == '#808080' or color_value == 'gray':
+                            elif 'color:#808080' in style or 'color:gray' in style:
                                 run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                            
+                            if 'text-decoration:line-through' in style:
                                 run.font.strike = True
                 else:
-                    # No colored spans, just add the text
-                    para.add_run(element.get_text())
+                    # No spans, just add text
+                    para.add_run(current_element.get_text())
             
-            # Process lists with appropriate formatting
+            # Process lists
             elif tag_name in ['ul', 'ol']:
-                # (List processing code preserved)
-                pass
+                for li in current_element.find_all('li', recursive=False):
+                    if tag_name == 'ul':
+                        list_item = doc.add_paragraph(style='List Bullet')
+                    else:
+                        list_item = doc.add_paragraph(style='List Number')
+                    
+                    # Check for spans with color
+                    spans = li.find_all('span')
+                    
+                    if spans:
+                        for span in spans:
+                            span_text = span.get_text()
+                            if not span_text.strip():
+                                continue
+                            
+                            run = list_item.add_run(span_text)
+                            
+                            # Apply color if present
+                            if 'style' in span.attrs:
+                                style = span['style']
+                                if 'color:#FF0000' in style or 'color:red' in style:
+                                    run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                                elif 'color:#FF8C00' in style or 'color:orange' in style:
+                                    run.font.color.rgb = RGBColor(255, 140, 0)  # Orange
+                                elif 'color:#808080' in style or 'color:gray' in style:
+                                    run.font.color.rgb = RGBColor(128, 128, 128)  # Gray
+                                
+                                if 'text-decoration:line-through' in style:
+                                    run.font.strike = True
+                    else:
+                        # No spans, just add text
+                        list_item.add_run(li.get_text())
+            
+            # Move to next element
+            current_element = current_element.find_next(['h1', 'h2', 'h3', 'h4', 'p', 'ul', 'ol'])
         
         # Save document to memory stream
         doc_stream = BytesIO()
