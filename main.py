@@ -1,37 +1,3 @@
-Okay, I understand the requirements for refactoring the SEO Content Optimizer script. This is a significant refactoring task. Here's the plan:
-
-1.  **Integrate Embeddings:** Fetch competitor content, generate embeddings, and use these embeddings to find relevant competitor text snippets. These snippets will be used as context/inspiration for the LLM (Claude) during new content generation and updates.
-2.  **Minimize Updates & Color-Coding:** Implement a diffing mechanism between original and updated content sections. Use special markers or HTML tags (`<ins>`, `<del>`) in the generated HTML. Modify the Word document generation function to parse these markers/tags and apply color/strikethrough formatting using `python-docx`.
-3.  **Heading Prefixes:** Add "(H2)" and "(H3)" prefixes to headings in the Word document outputs.
-4.  **Remove Skeleton Output:** Eliminate the separate "Recommended Content Structure" section from the final Word brief.
-5.  **Improve Content Flow:** Modify LLM prompts to explicitly request better transitions and referencing of previous sections, potentially providing the last paragraph of the previous section as context.
-6.  **Slim Down & Improve:** Refactor for clarity, remove redundancy, improve error handling, consolidate where possible, and enhance comments/docstrings. Standardize HTML parsing for document generation.
-
-I will provide the refactored code broken down into chunks as requested.
-
-**Note on Complexity:** Implementing the fine-grained, color-coded diffing in the Word document (`<ins>`/`<del>` tag parsing and applying formatting) is complex and can be fragile depending on the LLM's output consistency and the intricacies of HTML-to-DOCX conversion. I will implement this as requested, but be aware it might require further refinement based on real-world testing.
-
----
-
-**Refactored Code - Chunk 1/4**
-
-```python
-# -*- coding: utf-8 -*-
-"""
-Refactored SEO Content Optimizer Script
-
-This script analyzes SERPs, competitor content, and existing content 
-to provide recommendations and generate/update SEO-optimized articles.
-
-Key Refactoring Changes:
-- Uses competitor content embeddings to inform content generation and updates.
-- Implements minimal updates with color-coded diff tracking in Word output.
-- Adds (H2)/(H3) prefixes to Word document headings.
-- Removes the standalone structure skeleton from the Word brief output.
-- Enhances LLM prompts for better content flow between sections.
-- General code slimming, improved error handling, and comments.
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
