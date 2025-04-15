@@ -628,21 +628,7 @@ def extract_headings(url: str) -> Tuple[Optional[Dict[str, List[str]]], str]:
         error_msg = f"Heading extraction failed for {url}: Unexpected Error - {e}"
         logger.error(error_msg, exc_info=True)
         return None, error_msg
-
-#==============================================================================
-# End of Chunk 1/4
-#==============================================================================
-```
-
----
-
-**Refactored Code - Chunk 2/4**
-
-```python
-#==============================================================================
-# Start of Chunk 2/4
-#==============================================================================
-
+        
 ###############################################################################
 # 4. Embeddings and Semantic Analysis (Using OpenAI & Anthropic)
 ###############################################################################
