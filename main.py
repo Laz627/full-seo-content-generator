@@ -721,8 +721,134 @@ Content to analyze:
         logger.error(error_msg)
         return {}, False
 
+def extract_semantic_keywords(competitor_contents: List[Dict], openai_api_key: str, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Extract common semantic keywords and phrases from competitor content
+    Returns: keyword_data, success_status
+    """
+    try:
+        # Set OpenAI API key - compatible with older versions
+        openai.api_key = openai_api_key
+        
+        # Combine all content for comprehensive analysis
+        combined_content = ""
+        for i, c in enumerate(competitor_contents):
+            title = c.get('title', f'Competitor {i+1}')
+            url = c.get('url', '')
+            content = c.get('content', '')
+            
+            # Add content with source identification
+            combined_content += f"SOURCE: {title} ({url})\n\n{content}\n\n" + "-" * 40 + "\n\n"
+        
+        # Prepare summarized content if it's too long
+        if len(combined_content) > 15000:
+            combined_content = combined_content[:15000]
+        
+        # Use GPT-4o-mini to extract semantic keywords
+        # Version-compatible API call
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an SEO expert specializing in semantic keyword analysis."},
+                    {"role": "user", "content": f"""
+                    Analyze the following content from top-ranking pages for the keyword "{keyword}" and extract:
+                    
+                    1. Primary semantic terms (most important for this topic, maximum 15 terms)
+                    2. Secondary semantic terms (supporting terms for this topic, maximum 20 terms)
+                    3. Semantic questions that appear related to this topic (maximum 10 questions)
+                    
+                    For each term, provide:
+                    - The term/phrase itself
+                    - Importance score (0-1 scale)
+                    - Recommended usage frequency
+                    
+                    Format your response as JSON:
+                    {{
+                        "primary_terms": [
+                            {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
+                            {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
+                            ...
+                        ],
+                        "secondary_terms": [
+                            {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
+                            {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
+                            ...
+                        ],
+                        "semantic_questions": [
+                            "Question 1?",
+                            "Question 2?",
+                            ...
+                        ]
+                    }}
+                    
+                    Content to analyze:
+                    {combined_content}
+                    """}
+                ],
+                max_tokens=1500,
+                temperature=0.3
+            )
+            content = response.choices[0].message.content
+        except AttributeError:
+            # Fallback for very old versions of the API
+            response = openai.Completion.create(
+                engine="gpt-4o-mini",
+                prompt=f"""You are an SEO expert specializing in semantic keyword analysis.
+
+Analyze the following content from top-ranking pages for the keyword "{keyword}" and extract:
+
+1. Primary semantic terms (most important for this topic, maximum 15 terms)
+2. Secondary semantic terms (supporting terms for this topic, maximum 20 terms)
+3. Semantic questions that appear related to this topic (maximum 10 questions)
+
+For each term, provide:
+- The term/phrase itself
+- Importance score (0-1 scale)
+- Recommended usage frequency
+
+Format your response as JSON:
+{{
+    "primary_terms": [
+        {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
+        {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
+        ...
+    ],
+    "secondary_terms": [
+        {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
+        {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
+        ...
+    ],
+    "semantic_questions": [
+        "Question 1?",
+        "Question 2?",
+        ...
+    ]
+}}
+
+Content to analyze:
+{combined_content}
+""",
+                max_tokens=1500,
+                temperature=0.3
+            )
+            content = response.choices[0].text
+        
+        # Extract and parse JSON response
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        keyword_data = json.loads(content)
+        return keyword_data, True
+    
+    except Exception as e:
+        error_msg = f"Exception in extract_semantic_keywords: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
 def generate_content_brief(keyword: str, competitor_insights: Dict, paa_questions: List[Dict], 
-                          related_keywords: List[Dict], openai_api_key: str) -> Tuple[str, bool]:
+                          related_keywords: List[Dict], semantic_keywords: Dict, openai_api_key: str) -> Tuple[str, bool]:
     """
     Generate a concise, focused content brief based on competitor insights
     Returns: brief_content, success_status
@@ -754,6 +880,21 @@ def generate_content_brief(keyword: str, competitor_insights: Dict, paa_question
         # Format related keywords
         related_keywords_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10] if kw.get('keyword')])
         
+        # Format semantic keywords
+        primary_terms = []
+        if 'primary_terms' in semantic_keywords:
+            for term in semantic_keywords['primary_terms']:
+                primary_terms.append(f"{term.get('term')} (importance: {term.get('importance')}, usage: {term.get('recommended_usage')})")
+        
+        primary_terms_text = "\n".join(primary_terms)
+        
+        secondary_terms = []
+        if 'secondary_terms' in semantic_keywords:
+            for term in semantic_keywords['secondary_terms']:
+                secondary_terms.append(f"{term.get('term')} (importance: {term.get('importance')}, usage: {term.get('recommended_usage')})")
+        
+        secondary_terms_text = "\n".join(secondary_terms)
+        
         # Generate content brief with version-compatible API call
         try:
             response = openai.ChatCompletion.create(
@@ -779,6 +920,13 @@ def generate_content_brief(keyword: str, competitor_insights: Dict, paa_question
                     
                     IMPORTANT TERMINOLOGY:
                     {terminology}
+                    
+                    SEMANTIC KEYWORDS TO INCLUDE:
+                    Primary Terms:
+                    {primary_terms_text}
+                    
+                    Secondary Terms:
+                    {secondary_terms_text}
                     
                     COMPETITOR H1 HEADINGS:
                     {h1_headings}
@@ -807,10 +955,11 @@ def generate_content_brief(keyword: str, competitor_insights: Dict, paa_question
                     8. Target word count for each section
                     
                     FORMAT:
-                    - Use Markdown formatting with appropriate headings
-                    - Be concise and actionable
-                    - Focus on creating an outline that would be easy for a writer to follow
-                    - Include specific guidance on what makes competitors successful
+                    - Use clear, well-formatted output with proper line breaks
+                    - Use bold text with ** for important elements
+                    - Create a hierarchical structure with consistent formatting
+                    - Make sure subsections are clearly indented under their parent sections
+                    - Ensure content is well-organized and easy to follow
                     
                     The brief should be CONCISE and PRACTICAL - avoid any theoretical explanations or fluff. 
                     Focus on specific, actionable guidance based directly on what's working for competitors.
@@ -845,6 +994,13 @@ CONTENT TYPES USED BY COMPETITORS:
 IMPORTANT TERMINOLOGY:
 {terminology}
 
+SEMANTIC KEYWORDS TO INCLUDE:
+Primary Terms:
+{primary_terms_text}
+
+Secondary Terms:
+{secondary_terms_text}
+
 COMPETITOR H1 HEADINGS:
 {h1_headings}
 
@@ -872,10 +1028,11 @@ Create a content brief that includes:
 8. Target word count for each section
 
 FORMAT:
-- Use Markdown formatting with appropriate headings
-- Be concise and actionable
-- Focus on creating an outline that would be easy for a writer to follow
-- Include specific guidance on what makes competitors successful
+- Use clear, well-formatted output with proper line breaks
+- Use bold text with ** for important elements
+- Create a hierarchical structure with consistent formatting
+- Make sure subsections are clearly indented under their parent sections
+- Ensure content is well-organized and easy to follow
 
 The brief should be CONCISE and PRACTICAL - avoid any theoretical explanations or fluff. 
 Focus on specific, actionable guidance based directly on what's working for competitors.
@@ -1026,6 +1183,7 @@ def main():
     tabs = st.tabs([
         "Input & SERP Analysis", 
         "Competitor Content Analysis", 
+        "SEO Brief Data",
         "Content Brief Generation"
     ])
     
@@ -1167,6 +1325,17 @@ def main():
                         if insights_success:
                             st.session_state.results['competitor_insights'] = competitor_insights
                             
+                            # Extract semantic keywords from competitor content
+                            st.text("Extracting semantic keywords from competitor content...")
+                            semantic_keywords, keywords_success = extract_semantic_keywords(
+                                scraped_contents,
+                                openai_api_key,
+                                st.session_state.results['keyword']
+                            )
+                            
+                            if keywords_success:
+                                st.session_state.results['semantic_keywords'] = semantic_keywords
+                            
                             # Display core themes
                             st.subheader("Core Themes")
                             if 'core_themes' in competitor_insights:
@@ -1220,6 +1389,26 @@ def main():
                                 terms_df = pd.DataFrame(competitor_insights['terminology'])
                                 st.dataframe(terms_df)
                             
+                            # Display semantic keywords
+                            if 'semantic_keywords' in st.session_state.results:
+                                st.subheader("Semantic Keywords")
+                                
+                                semantic_kw = st.session_state.results['semantic_keywords']
+                                if 'primary_terms' in semantic_kw:
+                                    st.markdown("### Primary Terms")
+                                    primary_df = pd.DataFrame(semantic_kw['primary_terms'])
+                                    st.dataframe(primary_df)
+                                
+                                if 'secondary_terms' in semantic_kw:
+                                    st.markdown("### Secondary Terms")
+                                    secondary_df = pd.DataFrame(semantic_kw['secondary_terms'])
+                                    st.dataframe(secondary_df)
+                                
+                                if 'semantic_questions' in semantic_kw:
+                                    st.markdown("### Semantic Questions")
+                                    for q in semantic_kw['semantic_questions']:
+                                        st.markdown(f"- {q}")
+                            
                             st.success(f"Competitor analysis completed in {format_time(time.time() - start_time)}")
                         else:
                             st.error("Failed to extract insights from competitor content")
@@ -1265,9 +1454,155 @@ def main():
                     with st.expander("Important Terminology"):
                         terms_df = pd.DataFrame(insights['terminology'])
                         st.dataframe(terms_df)
+                
+                # Display semantic keywords if available
+                if 'semantic_keywords' in st.session_state.results:
+                    with st.expander("Semantic Keywords"):
+                        semantic_kw = st.session_state.results['semantic_keywords']
+                        if 'primary_terms' in semantic_kw:
+                            st.markdown("### Primary Terms")
+                            primary_df = pd.DataFrame(semantic_kw['primary_terms'])
+                            st.dataframe(primary_df)
+                        
+                        if 'secondary_terms' in semantic_kw:
+                            st.markdown("### Secondary Terms")
+                            secondary_df = pd.DataFrame(semantic_kw['secondary_terms'])
+                            st.dataframe(secondary_df)
+                        
+                        if 'semantic_questions' in semantic_kw:
+                            st.markdown("### Semantic Questions")
+                            for q in semantic_kw['semantic_questions']:
+                                st.markdown(f"- {q}")
     
-    # Tab 3: Content Brief Generation
+    # Tab 3: SEO Brief Data
     with tabs[2]:
+        st.header("SEO Brief Research Data")
+        
+        if 'organic_results' not in st.session_state.results:
+            st.warning("Please fetch SERP data first (in the 'Input & SERP Analysis' tab)")
+        else:
+            # Display the key data needed for the brief in a well-organized format
+            
+            # 1. Keyword information
+            if 'keyword' in st.session_state.results:
+                st.subheader(f"Target Keyword: {st.session_state.results['keyword']}")
+            
+            # 2. SERP Features Section
+            st.markdown("## SERP Features")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # SERP Feature types
+                if 'serp_features' in st.session_state.results:
+                    features_df = pd.DataFrame(st.session_state.results['serp_features'])
+                    if not features_df.empty:
+                        st.markdown("### SERP Feature Types")
+                        st.dataframe(features_df)
+            
+            with col2:
+                # Top-ranking page types
+                if 'organic_results' in st.session_state.results:
+                    page_types = {}
+                    for result in st.session_state.results['organic_results']:
+                        page_type = result.get('page_type')
+                        if page_type in page_types:
+                            page_types[page_type] += 1
+                        else:
+                            page_types[page_type] = 1
+                    
+                    page_types_df = pd.DataFrame([
+                        {"Page Type": p_type, "Count": count} 
+                        for p_type, count in page_types.items()
+                    ])
+                    
+                    if not page_types_df.empty:
+                        st.markdown("### Top-Ranking Page Types")
+                        st.dataframe(page_types_df)
+            
+            # 3. People Also Asked Questions
+            if 'paa_questions' in st.session_state.results and st.session_state.results['paa_questions']:
+                st.markdown("## People Also Asked Questions")
+                
+                paa_df = pd.DataFrame([
+                    {"Question": q.get('question', '')}
+                    for q in st.session_state.results['paa_questions']
+                ])
+                
+                if not paa_df.empty:
+                    st.dataframe(paa_df)
+            
+            # 4. Related Keywords
+            if 'related_keywords' in st.session_state.results:
+                st.markdown("## Related Keywords")
+                
+                related_kw_df = pd.DataFrame(st.session_state.results['related_keywords'])
+                if not related_kw_df.empty:
+                    st.dataframe(related_kw_df)
+            
+            # 5. Semantic Keywords section
+            if 'semantic_keywords' in st.session_state.results:
+                st.markdown("## Semantic Keywords")
+                
+                semantic_kw = st.session_state.results['semantic_keywords']
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if 'primary_terms' in semantic_kw:
+                        st.markdown("### Primary Terms")
+                        primary_df = pd.DataFrame(semantic_kw['primary_terms'])
+                        if not primary_df.empty:
+                            st.dataframe(primary_df)
+                
+                with col2:
+                    if 'secondary_terms' in semantic_kw:
+                        st.markdown("### Secondary Terms")
+                        secondary_df = pd.DataFrame(semantic_kw['secondary_terms'])
+                        if not secondary_df.empty:
+                            st.dataframe(secondary_df)
+                
+                if 'semantic_questions' in semantic_kw and semantic_kw['semantic_questions']:
+                    st.markdown("### Semantic Questions")
+                    for q in semantic_kw['semantic_questions']:
+                        st.markdown(f"- {q}")
+            
+            # 6. Top Competitor URLs
+            if 'organic_results' in st.session_state.results:
+                st.markdown("## Top Competitor URLs")
+                
+                top_urls = []
+                for i, result in enumerate(st.session_state.results['organic_results'][:5]):  # Top 5 competitors
+                    top_urls.append({
+                        "Rank": i+1,
+                        "Title": result.get('title', ''),
+                        "URL": result.get('url', '')
+                    })
+                
+                top_urls_df = pd.DataFrame(top_urls)
+                if not top_urls_df.empty:
+                    st.dataframe(top_urls_df)
+            
+            # 7. Competitor Headings
+            if 'competitor_insights' in st.session_state.results and 'extracted_headings' in st.session_state.results['competitor_insights']:
+                st.markdown("## Competitor Headings")
+                
+                extracted = st.session_state.results['competitor_insights']['extracted_headings']
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### H1 Headings")
+                    for h in extracted.get('h1', []):
+                        st.markdown(f"- {h}")
+                
+                with col2:
+                    st.markdown("### H2 Headings")
+                    for h in extracted.get('h2', [])[:15]:  # Limit to 15 for readability
+                        st.markdown(f"- {h}")
+    
+    # Tab 4: Content Brief Generation
+    with tabs[3]:
         st.header("Content Brief Generation")
         
         if 'competitor_insights' not in st.session_state.results:
@@ -1280,12 +1615,28 @@ def main():
                     with st.spinner("Generating content brief based on competitor insights..."):
                         start_time = time.time()
                         
+                        # Make sure we have semantic keywords, or extract them if missing
+                        if 'semantic_keywords' not in st.session_state.results and 'scraped_contents' in st.session_state.results:
+                            st.text("Extracting semantic keywords from competitor content...")
+                            semantic_keywords, keywords_success = extract_semantic_keywords(
+                                st.session_state.results['scraped_contents'],
+                                openai_api_key,
+                                st.session_state.results['keyword']
+                            )
+                            
+                            if keywords_success:
+                                st.session_state.results['semantic_keywords'] = semantic_keywords
+                        
+                        # Use extracted semantic keywords for better brief generation
+                        semantic_keywords = st.session_state.results.get('semantic_keywords', {})
+                        
                         # Generate content brief
                         brief_content, brief_success = generate_content_brief(
                             st.session_state.results['keyword'],
                             st.session_state.results['competitor_insights'],
                             st.session_state.results.get('paa_questions', []),
                             st.session_state.results.get('related_keywords', []),
+                            semantic_keywords,
                             openai_api_key
                         )
                         
@@ -1315,7 +1666,7 @@ def main():
                                     st.session_state.results['keyword'],
                                     semantic_structure,
                                     st.session_state.results.get('related_keywords', []),
-                                    {},  # No term data needed
+                                    semantic_keywords,  # Use semantic keywords
                                     openai_api_key
                                 )
                                 
@@ -1366,6 +1717,19 @@ def main():
                                 elif re.match(r'^\d+\.\s', line):
                                     text = re.sub(r'^\d+\.\s', '', line)
                                     doc.add_paragraph(text, style='List Number')
+                                
+                                # Handle bold text
+                                elif '**' in line:
+                                    p = doc.add_paragraph()
+                                    segments = re.split(r'(\*\*.*?\*\*)', line)
+                                    for segment in segments:
+                                        if segment.startswith('**') and segment.endswith('**'):
+                                            # Bold text
+                                            bold_run = p.add_run(segment[2:-2])
+                                            bold_run.bold = True
+                                        else:
+                                            # Regular text
+                                            p.add_run(segment)
                                 
                                 # Regular paragraph
                                 else:
