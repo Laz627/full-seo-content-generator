@@ -1344,7 +1344,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
     """
     Generate comprehensive article with natural language flow and balanced keyword usage.
     If guidance_only is True, will generate writing guidance instead of full content.
-    Uses Claude 3.7 Sonnet to optimize for important terms and proper length.
+    Uses Claude 3.5 Sonnet to optimize for important terms and proper length.
     Returns: article_content, success_status
     """
     try:
@@ -1493,64 +1493,64 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
             guidance_content = response.content[0].text
             return guidance_content, True
         else:
-            # SIGNIFICANTLY IMPROVED: Increased max_tokens, keep structure instructions
+            # COMPLETELY REVISED: Enhanced system prompt and writing instructions
             response = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=6000,  # INCREASED max_tokens to ensure full article generation
-                system="""You are an expert content writer who creates concise, structured articles.
-                You are known for completing articles within the specified word count while covering all requested sections.
-                
+                max_tokens=6000,
+                system="""You are an expert content writer who creates engaging, flowing articles with natural transitions and varied sentence structures.
+
                 Your writing principles:
-                1. Write extremely concise paragraphs (2-3 sentences each)
-                2. Use clear headings for organization (H1, H2, H3, H4)
-                3. Cover all requested sections briefly rather than some sections in depth
-                4. Integrate required SEO terms naturally throughout the article
-                5. Prioritize completeness over depth""",
+                1. Create smooth, logical transitions between sections and paragraphs
+                2. Vary sentence structures and section opening styles to maintain reader interest
+                3. Maintain a cohesive narrative throughout the article
+                4. Integrate SEO terms naturally and contextually within the text
+                5. Balance both structure and creative expression""",
                 
                 messages=[
                     {"role": "user", "content": f"""
-                    Write a concise article about "{keyword}" that covers ALL the sections outlined below.
+                    Write an engaging, natural-flowing article about "{keyword}" covering ALL the sections outlined below.
                     
                     Use this semantic structure:
                     H1: {h1}
                     
-                    Sections to include (YOU MUST INCLUDE ALL SECTIONS LISTED - this is critical):
+                    Sections to include (cover ALL sections listed):
                     {sections_str}
                     
-                    STRICT LENGTH REQUIREMENTS:
-                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words maximum (STRICTLY ENFORCE THIS)
-                    2. PARAGRAPH LENGTH: Each paragraph must be only 2-3 sentences (VERY IMPORTANT)
+                    LENGTH REQUIREMENTS:
+                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words
+                    2. PARAGRAPH LENGTH: Each paragraph should be concise (2-3 sentences)
                     
-                    SECTION WORD COUNTS (to ensure completeness):
-                    - Introduction: 100-150 words
-                    - Each H2 section: 75-100 words maximum
-                    - Each H3 subsection: 50-75 words maximum
-                    - Each H4 subsection: 25-50 words maximum
-                    - Conclusion: 100 words maximum
+                    CRITICAL WRITING STYLE REQUIREMENTS:
+                    1. DO NOT use the same introductory pattern for different sections
+                    2. Each section should have a unique opening approach and tone
+                    3. Create a cohesive narrative flow throughout the article
+                    4. Use varied transitional phrases between sections and paragraphs
+                    5. Avoid beginning consecutive paragraphs with similar structures
                     
-                    CONTENT STRUCTURE:
-                    1. Start with a brief introduction
-                    2. Include ALL the H2 sections listed above (crucial)
-                    3. Include ALL H3 subsections listed under each H2 (crucial)
-                    4. Add H4 subheadings where helpful for organization
-                    5. End with a brief conclusion
+                    Examples of varied section introductions:
+                    - Direct statement: "Understanding {keyword} requires..."
+                    - Scenario: "Imagine a situation where..."
+                    - Statistic: "Recent studies show that..."
+                    - Question-based: "What makes {keyword} so important? The answer lies in..."
+                    - Comparison: "Unlike similar approaches, {keyword}..."
+                    - Expert insight: "Industry experts emphasize that..."
                     
-                    CRITICAL SEO REQUIREMENTS:
-                    Primary terms to include (with exact usage count):
+                    SEO REQUIREMENTS:
+                    Primary terms to include (with recommended usage):
                     {primary_terms_str}
                     
                     Secondary terms to include (at least once each):
                     {secondary_terms_str}
                     
-                    Address these questions briefly within the content:
+                    Address these questions naturally within the content:
                     {paa_str}
                     
-                    CRITICAL WRITING INSTRUCTIONS:
-                    1. DO NOT use rhetorical questions
-                    2. ENSURE every paragraph is only 2-3 sentences
-                    3. ENSURE all listed sections are included
-                    4. MAINTAIN STRICT TOTAL WORD COUNT of 1,200-1,500 words
-                    5. USE bullet points instead of long paragraphs for lists
+                    OTHER CONTENT GUIDELINES:
+                    1. While maintaining SEO requirements, prioritize NATURAL LANGUAGE FLOW
+                    2. Create content that sounds like it was written by a single expert voice
+                    3. Include ALL listed sections but vary how you introduce and transition between them
+                    4. Use bullet points for lists rather than long paragraphs
+                    5. Avoid obvious keyword stuffing that disrupts reading flow
                     
                     Format the article with proper HTML:
                     - Main title in <h1> tags
@@ -1561,7 +1561,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
                     - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
                     """}
                 ],
-                temperature=0.4  # Reduced temperature for more consistent output
+                temperature=0.6  # Increased temperature for more creative, varied output
             )
             
             article_content = response.content[0].text
