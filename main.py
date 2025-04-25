@@ -555,7 +555,7 @@ def extract_important_terms(competitor_contents: List[Dict], anthropic_api_key: 
         
         # Use Claude to analyze content and extract important terms
         response = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1500,
             system="You are an SEO expert specializing in content analysis.",
             messages=[
@@ -1184,7 +1184,7 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         
         # Generate meta tags
         response = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=300,
             system="You are an SEO specialist who creates optimized meta tags.",
             messages=[
@@ -1285,7 +1285,7 @@ def analyze_semantic_structure(contents: List[Dict], anthropic_api_key: str) -> 
         
         # Use Claude to analyze content and suggest headings structure
         response = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=1000,
             system="You are an SEO expert specializing in content structure.",
             messages=[
@@ -1444,7 +1444,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         if guidance_only:
             # Generate writing guidance for each section
             response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=7000,
                 system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
@@ -1495,7 +1495,7 @@ def generate_article(keyword: str, semantic_structure: Dict, related_keywords: L
         else:
             # SIGNIFICANTLY IMPROVED: Increased max_tokens, keep structure instructions
             response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=6000,  # INCREASED max_tokens to ensure full article generation
                 system="""You are an expert content writer who creates concise, structured articles.
                 You are known for completing articles within the specified word count while covering all requested sections.
@@ -2582,7 +2582,7 @@ def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict]
         
         # Use Claude to analyze content gaps
         response = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=2500,
             system="You are an expert SEO content analyst. Return your analysis in VALID JSON format following the provided template exactly.",
             messages=[
@@ -3201,7 +3201,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 
             # Find most relevant original heading for this section
             matching_response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=50,
                 system="You are an expert at matching content sections.",
                 messages=[
@@ -3236,7 +3236,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             if matching_heading == "NONE" or matching_heading not in section_content:
                 # No matching content found - create new section with controlled length
                 section_content_response = client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
+                    model="claude-3-5-sonnet-20241022",
                     max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
                     system="You are an expert content writer focused on concise, informative content.",
                     messages=[
@@ -3283,7 +3283,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                 
                 # Enhance this section with strict word count limit
                 enhanced_section_response = client.messages.create(
-                    model="claude-3-7-sonnet-20250219",
+                    model="claude-3-5-sonnet-20241022",
                     max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML and improvements
                     system="You are an expert at enhancing content while preserving value and maintaining conciseness.",
                     messages=[
@@ -3361,7 +3361,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
                     
                     # Generate content for this subsection with strict word limit
                     subsection_content_response = client.messages.create(
-                        model="claude-3-7-sonnet-20250219",
+                        model="claude-3-5-sonnet-20241022",
                         max_tokens=subsection_word_limit * 2,  # Allow some extra tokens for HTML
                         system="You are an expert content writer focused on brevity and impact.",
                         messages=[
@@ -3400,7 +3400,7 @@ def generate_optimized_article_with_tracking(existing_content: Dict, competitor_
             conclusion_word_limit = min(200, target_word_count - current_word_count)
             
             conclusion_response = client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=conclusion_word_limit * 2,  # Allow some extra tokens for HTML
                 system="You are an expert at writing concise, impactful conclusions.",
                 messages=[
