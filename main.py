@@ -546,8 +546,8 @@ def extract_competitor_insights(competitor_contents: List[Dict], openai_api_key:
     Returns: competitor_insights, success_status
     """
     try:
-        # Set OpenAI API key
-        client = openai.OpenAI(api_key=openai_api_key)
+        # Set OpenAI API key - compatible with older versions
+        openai.api_key = openai_api_key
         
         # Extract all headings from competitor content
         all_headings = {"h1": [], "h2": [], "h3": []}
@@ -573,72 +573,138 @@ def extract_competitor_insights(competitor_contents: List[Dict], openai_api_key:
             combined_content = combined_content[:20000]
         
         # Use GPT-4o-mini to extract insights from competitor content
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1500,
-            messages=[
-                {"role": "system", "content": "You are an SEO expert who extracts valuable insights from competitor content to create effective content briefs."},
-                {"role": "user", "content": f"""
-                Analyze the following content from top-ranking pages for the keyword "{keyword}" and extract the most important insights for creating a comprehensive content brief.
-                
-                Focus ONLY on extracting these elements (no analysis or recommendations):
-                
-                1. Core themes (main topics that appear across multiple competitors)
-                2. Common headings structure used by competitors
-                3. Key points/facts consistently mentioned across competitors
-                4. Types of content included (lists, FAQs, stats, examples, etc.)
-                5. Important terminology and definitions
-                
-                Format your response as JSON:
-                {{
-                    "core_themes": [
-                        {{
-                            "theme": "Main theme name",
-                            "importance": "High/Medium/Low",
-                            "description": "Brief description of what this theme covers"
-                        }}
-                    ],
-                    "common_heading_structure": [
-                        {{
-                            "section_type": "Introduction/Main Section/Conclusion etc.",
-                            "example_headings": ["Heading example 1", "Heading example 2"],
-                            "typical_content": "Brief description of what's typically included in this section"
-                        }}
-                    ],
-                    "key_points": [
-                        {{
-                            "point": "Specific point/fact",
-                            "frequency": "Mentioned in X out of Y competitors",
-                            "context": "When/where this point is typically mentioned"
-                        }}
-                    ],
-                    "content_types": [
-                        {{
-                            "type": "Lists/FAQs/Stats/Examples/etc.",
-                            "usage": "How competitors typically use this content type",
-                            "examples": ["Brief example 1", "Brief example 2"]
-                        }}
-                    ],
-                    "terminology": [
-                        {{
-                            "term": "Specific term",
-                            "definition": "How it's defined",
-                            "importance": "High/Medium/Low"
-                        }}
-                    ]
-                }}
-                
-                Be concise and specific. Focus on extracting factual information, not making recommendations.
-                
-                Content to analyze:
-                {combined_content}
-                """}
-            ],
-            temperature=0.3
-        )
+        # Version-compatible API call
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an SEO expert who extracts valuable insights from competitor content to create effective content briefs."},
+                    {"role": "user", "content": f"""
+                    Analyze the following content from top-ranking pages for the keyword "{keyword}" and extract the most important insights for creating a comprehensive content brief.
+                    
+                    Focus ONLY on extracting these elements (no analysis or recommendations):
+                    
+                    1. Core themes (main topics that appear across multiple competitors)
+                    2. Common headings structure used by competitors
+                    3. Key points/facts consistently mentioned across competitors
+                    4. Types of content included (lists, FAQs, stats, examples, etc.)
+                    5. Important terminology and definitions
+                    
+                    Format your response as JSON:
+                    {{
+                        "core_themes": [
+                            {{
+                                "theme": "Main theme name",
+                                "importance": "High/Medium/Low",
+                                "description": "Brief description of what this theme covers"
+                            }}
+                        ],
+                        "common_heading_structure": [
+                            {{
+                                "section_type": "Introduction/Main Section/Conclusion etc.",
+                                "example_headings": ["Heading example 1", "Heading example 2"],
+                                "typical_content": "Brief description of what's typically included in this section"
+                            }}
+                        ],
+                        "key_points": [
+                            {{
+                                "point": "Specific point/fact",
+                                "frequency": "Mentioned in X out of Y competitors",
+                                "context": "When/where this point is typically mentioned"
+                            }}
+                        ],
+                        "content_types": [
+                            {{
+                                "type": "Lists/FAQs/Stats/Examples/etc.",
+                                "usage": "How competitors typically use this content type",
+                                "examples": ["Brief example 1", "Brief example 2"]
+                            }}
+                        ],
+                        "terminology": [
+                            {{
+                                "term": "Specific term",
+                                "definition": "How it's defined",
+                                "importance": "High/Medium/Low"
+                            }}
+                        ]
+                    }}
+                    
+                    Be concise and specific. Focus on extracting factual information, not making recommendations.
+                    
+                    Content to analyze:
+                    {combined_content}
+                    """}
+                ],
+                max_tokens=1500,
+                temperature=0.3
+            )
+            content = response.choices[0].message.content
+        except AttributeError:
+            # Fallback for very old versions of the API
+            response = openai.Completion.create(
+                engine="gpt-4o-mini",
+                prompt=f"""You are an SEO expert who extracts valuable insights from competitor content to create effective content briefs.
+
+Analyze the following content from top-ranking pages for the keyword "{keyword}" and extract the most important insights for creating a comprehensive content brief.
+
+Focus ONLY on extracting these elements (no analysis or recommendations):
+
+1. Core themes (main topics that appear across multiple competitors)
+2. Common headings structure used by competitors
+3. Key points/facts consistently mentioned across competitors
+4. Types of content included (lists, FAQs, stats, examples, etc.)
+5. Important terminology and definitions
+
+Format your response as JSON:
+{{
+    "core_themes": [
+        {{
+            "theme": "Main theme name",
+            "importance": "High/Medium/Low",
+            "description": "Brief description of what this theme covers"
+        }}
+    ],
+    "common_heading_structure": [
+        {{
+            "section_type": "Introduction/Main Section/Conclusion etc.",
+            "example_headings": ["Heading example 1", "Heading example 2"],
+            "typical_content": "Brief description of what's typically included in this section"
+        }}
+    ],
+    "key_points": [
+        {{
+            "point": "Specific point/fact",
+            "frequency": "Mentioned in X out of Y competitors",
+            "context": "When/where this point is typically mentioned"
+        }}
+    ],
+    "content_types": [
+        {{
+            "type": "Lists/FAQs/Stats/Examples/etc.",
+            "usage": "How competitors typically use this content type",
+            "examples": ["Brief example 1", "Brief example 2"]
+        }}
+    ],
+    "terminology": [
+        {{
+            "term": "Specific term",
+            "definition": "How it's defined",
+            "importance": "High/Medium/Low"
+        }}
+    ]
+}}
+
+Be concise and specific. Focus on extracting factual information, not making recommendations.
+
+Content to analyze:
+{combined_content}
+""",
+                max_tokens=1500,
+                temperature=0.3
+            )
+            content = response.choices[0].text
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
             content = json_match.group(1)
@@ -662,8 +728,8 @@ def generate_content_brief(keyword: str, competitor_insights: Dict, paa_question
     Returns: brief_content, success_status
     """
     try:
-        # Set OpenAI API key
-        client = openai.OpenAI(api_key=openai_api_key)
+        # Set OpenAI API key - compatible with older versions
+        openai.api_key = openai_api_key
         
         # Format competitor insights for the prompt
         core_themes = json.dumps(competitor_insights.get('core_themes', []), indent=2)
@@ -688,73 +754,136 @@ def generate_content_brief(keyword: str, competitor_insights: Dict, paa_question
         # Format related keywords
         related_keywords_text = ", ".join([kw.get('keyword', '') for kw in related_keywords[:10] if kw.get('keyword')])
         
-        # Generate content brief
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1800,
-            messages=[
-                {"role": "system", "content": "You are an expert content strategist who creates concise, actionable content briefs based on competitor analysis."},
-                {"role": "user", "content": f"""
-                Create a concise, actionable content brief for the keyword: "{keyword}"
-                
-                Use these competitor insights to inform the brief:
-                
-                CORE THEMES:
-                {core_themes}
-                
-                COMMON HEADING STRUCTURE:
-                {heading_structure}
-                
-                KEY POINTS CONSISTENTLY MENTIONED:
-                {key_points}
-                
-                CONTENT TYPES USED BY COMPETITORS:
-                {content_types}
-                
-                IMPORTANT TERMINOLOGY:
-                {terminology}
-                
-                COMPETITOR H1 HEADINGS:
-                {h1_headings}
-                
-                COMPETITOR H2 HEADINGS:
-                {h2_headings}
-                
-                COMPETITOR H3 HEADINGS:
-                {h3_headings}
-                
-                PEOPLE ALSO ASKED QUESTIONS:
-                {paa_questions_text}
-                
-                RELATED KEYWORDS:
-                {related_keywords_text}
-                
-                Create a content brief that includes:
-                
-                1. Suggested article title (H1)
-                2. Recommended main sections (H2s) with brief descriptions of what to include
-                3. Suggested subsections (H3s) where appropriate
-                4. Key points that must be covered
-                5. Questions that should be answered
-                6. Recommended content types (lists, tables, examples, etc.)
-                7. Important terminology to include
-                8. Target word count for each section
-                
-                FORMAT:
-                - Use Markdown formatting with appropriate headings
-                - Be concise and actionable
-                - Focus on creating an outline that would be easy for a writer to follow
-                - Include specific guidance on what makes competitors successful
-                
-                The brief should be CONCISE and PRACTICAL - avoid any theoretical explanations or fluff. 
-                Focus on specific, actionable guidance based directly on what's working for competitors.
-                """}
-            ],
-            temperature=0.4
-        )
-        
-        # Extract brief content
-        brief_content = response.choices[0].message.content
+        # Generate content brief with version-compatible API call
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert content strategist who creates concise, actionable content briefs based on competitor analysis."},
+                    {"role": "user", "content": f"""
+                    Create a concise, actionable content brief for the keyword: "{keyword}"
+                    
+                    Use these competitor insights to inform the brief:
+                    
+                    CORE THEMES:
+                    {core_themes}
+                    
+                    COMMON HEADING STRUCTURE:
+                    {heading_structure}
+                    
+                    KEY POINTS CONSISTENTLY MENTIONED:
+                    {key_points}
+                    
+                    CONTENT TYPES USED BY COMPETITORS:
+                    {content_types}
+                    
+                    IMPORTANT TERMINOLOGY:
+                    {terminology}
+                    
+                    COMPETITOR H1 HEADINGS:
+                    {h1_headings}
+                    
+                    COMPETITOR H2 HEADINGS:
+                    {h2_headings}
+                    
+                    COMPETITOR H3 HEADINGS:
+                    {h3_headings}
+                    
+                    PEOPLE ALSO ASKED QUESTIONS:
+                    {paa_questions_text}
+                    
+                    RELATED KEYWORDS:
+                    {related_keywords_text}
+                    
+                    Create a content brief that includes:
+                    
+                    1. Suggested article title (H1)
+                    2. Recommended main sections (H2s) with brief descriptions of what to include
+                    3. Suggested subsections (H3s) where appropriate
+                    4. Key points that must be covered
+                    5. Questions that should be answered
+                    6. Recommended content types (lists, tables, examples, etc.)
+                    7. Important terminology to include
+                    8. Target word count for each section
+                    
+                    FORMAT:
+                    - Use Markdown formatting with appropriate headings
+                    - Be concise and actionable
+                    - Focus on creating an outline that would be easy for a writer to follow
+                    - Include specific guidance on what makes competitors successful
+                    
+                    The brief should be CONCISE and PRACTICAL - avoid any theoretical explanations or fluff. 
+                    Focus on specific, actionable guidance based directly on what's working for competitors.
+                    """}
+                ],
+                max_tokens=1800,
+                temperature=0.4
+            )
+            brief_content = response.choices[0].message.content
+        except AttributeError:
+            # Fallback for very old versions of the API
+            response = openai.Completion.create(
+                engine="gpt-4o-mini",
+                prompt=f"""You are an expert content strategist who creates concise, actionable content briefs based on competitor analysis.
+
+Create a concise, actionable content brief for the keyword: "{keyword}"
+
+Use these competitor insights to inform the brief:
+
+CORE THEMES:
+{core_themes}
+
+COMMON HEADING STRUCTURE:
+{heading_structure}
+
+KEY POINTS CONSISTENTLY MENTIONED:
+{key_points}
+
+CONTENT TYPES USED BY COMPETITORS:
+{content_types}
+
+IMPORTANT TERMINOLOGY:
+{terminology}
+
+COMPETITOR H1 HEADINGS:
+{h1_headings}
+
+COMPETITOR H2 HEADINGS:
+{h2_headings}
+
+COMPETITOR H3 HEADINGS:
+{h3_headings}
+
+PEOPLE ALSO ASKED QUESTIONS:
+{paa_questions_text}
+
+RELATED KEYWORDS:
+{related_keywords_text}
+
+Create a content brief that includes:
+
+1. Suggested article title (H1)
+2. Recommended main sections (H2s) with brief descriptions of what to include
+3. Suggested subsections (H3s) where appropriate
+4. Key points that must be covered
+5. Questions that should be answered
+6. Recommended content types (lists, tables, examples, etc.)
+7. Important terminology to include
+8. Target word count for each section
+
+FORMAT:
+- Use Markdown formatting with appropriate headings
+- Be concise and actionable
+- Focus on creating an outline that would be easy for a writer to follow
+- Include specific guidance on what makes competitors successful
+
+The brief should be CONCISE and PRACTICAL - avoid any theoretical explanations or fluff. 
+Focus on specific, actionable guidance based directly on what's working for competitors.
+""",
+                max_tokens=1800,
+                temperature=0.4
+            )
+            brief_content = response.choices[0].text
         
         return brief_content, True
     
@@ -770,8 +899,8 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
     Returns: meta_title, meta_description, success_status
     """
     try:
-        # Set OpenAI API key
-        client = openai.OpenAI(api_key=openai_api_key)
+        # Set OpenAI API key - compatible with older versions
+        openai.api_key = openai_api_key
         
         # Extract H1 and first few sections for context
         h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
@@ -786,38 +915,68 @@ def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords:
         
         primary_terms_str = ", ".join(primary_terms) if primary_terms else top_keywords
         
-        # Generate meta tags
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=300,
-            messages=[
-                {"role": "system", "content": "You are an SEO specialist who creates optimized meta tags."},
-                {"role": "user", "content": f"""
-                Create an SEO-optimized meta title and description for an article about "{keyword}".
-                
-                The article's main heading is: "{h1}"
-                
-                Primary terms to include: {primary_terms_str}
-                Related keywords to consider: {top_keywords}
-                
-                Guidelines:
-                1. Meta title: 50-60 characters, include primary keyword near the beginning
-                2. Meta description: 150-160 characters, include primary and secondary keywords
-                3. Be compelling, accurate, and include a call to action in the description
-                4. Avoid clickbait, use natural language
-                
-                Format your response as JSON:
-                {{
-                    "meta_title": "Your optimized meta title here",
-                    "meta_description": "Your optimized meta description here"
-                }}
-                """}
-            ],
-            temperature=0.7
-        )
+        # Generate meta tags with version-compatible API call
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an SEO specialist who creates optimized meta tags."},
+                    {"role": "user", "content": f"""
+                    Create an SEO-optimized meta title and description for an article about "{keyword}".
+                    
+                    The article's main heading is: "{h1}"
+                    
+                    Primary terms to include: {primary_terms_str}
+                    Related keywords to consider: {top_keywords}
+                    
+                    Guidelines:
+                    1. Meta title: 50-60 characters, include primary keyword near the beginning
+                    2. Meta description: 150-160 characters, include primary and secondary keywords
+                    3. Be compelling, accurate, and include a call to action in the description
+                    4. Avoid clickbait, use natural language
+                    
+                    Format your response as JSON:
+                    {{
+                        "meta_title": "Your optimized meta title here",
+                        "meta_description": "Your optimized meta description here"
+                    }}
+                    """}
+                ],
+                max_tokens=300,
+                temperature=0.7
+            )
+            content = response.choices[0].message.content
+        except AttributeError:
+            # Fallback for very old versions of the API
+            response = openai.Completion.create(
+                engine="gpt-4o-mini",
+                prompt=f"""You are an SEO specialist who creates optimized meta tags.
+
+Create an SEO-optimized meta title and description for an article about "{keyword}".
+
+The article's main heading is: "{h1}"
+
+Primary terms to include: {primary_terms_str}
+Related keywords to consider: {top_keywords}
+
+Guidelines:
+1. Meta title: 50-60 characters, include primary keyword near the beginning
+2. Meta description: 150-160 characters, include primary and secondary keywords
+3. Be compelling, accurate, and include a call to action in the description
+4. Avoid clickbait, use natural language
+
+Format your response as JSON:
+{{
+    "meta_title": "Your optimized meta title here",
+    "meta_description": "Your optimized meta description here"
+}}
+""",
+                max_tokens=300,
+                temperature=0.7
+            )
+            content = response.choices[0].text
         
         # Extract and parse JSON response
-        content = response.choices[0].message.content
         # Find JSON content within response (in case there's additional text)
         json_match = re.search(r'({.*})', content, re.DOTALL)
         if json_match:
