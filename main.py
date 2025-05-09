@@ -21,9 +21,6 @@ import traceback
 import openpyxl
 import matplotlib.pyplot as plt
 import altair as alt
-import faiss
-from collections import Counter
-from textstat import flesch_reading_ease, text_standard
 
 # Configure logging
 logging.basicConfig(
@@ -65,169 +62,7 @@ def format_time(seconds: float) -> str:
         return f"{minutes} min {sec:.1f} sec"
 
 ###############################################################################
-# 2. FireCrawl Client for Web Scraping
-###############################################################################
-
-class FireCrawl:
-    """
-    Client for interacting with FireCrawl's API with concurrency constraints.
-    """
-    def __init__(self, api_key: str, max_concurrency: int = 5, rate_limit_per_minute: int = 60):
-        self.api_key = api_key
-        self.max_concurrency = max_concurrency
-        self.rate_limit_per_minute = rate_limit_per_minute
-        self.active_requests = 0
-        self.request_times = []
-        self.logger = logging.getLogger(__name__)
-    
-    def _wait_for_rate_limit(self):
-        """Wait if rate limit has been reached"""
-        now = time.time()
-        # Clean up old requests
-        self.request_times = [t for t in self.request_times if now - t < 60]
-        
-        if len(self.request_times) >= self.rate_limit_per_minute:
-            # Wait until oldest request is a minute old
-            wait_time = 60 - (now - self.request_times[0])
-            if wait_time > 0:
-                self.logger.info(f"Rate limit reached. Waiting {wait_time:.2f} seconds.")
-                time.sleep(wait_time)
-                # Clean up again after waiting
-                now = time.time()
-                self.request_times = [t for t in self.request_times if now - t < 60]
-    
-    def _wait_for_concurrency(self):
-        """Wait until concurrency slot is available"""
-        while self.active_requests >= self.max_concurrency:
-            self.logger.info(f"Max concurrency reached ({self.max_concurrency}). Waiting...")
-            time.sleep(1)
-    
-    def scrape_url(self, url: str) -> Tuple[str, bool]:
-        """
-        Scrape a webpage using FireCrawl API.
-        Returns: content, success_status
-        """
-        try:
-            # Wait for rate limit and concurrency slots
-            self._wait_for_rate_limit()
-            self._wait_for_concurrency()
-            
-            # Track request
-            self.active_requests += 1
-            self.request_times.append(time.time())
-            
-            # Make API request to FireCrawl
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            data = {
-                'url': url,
-                'javascript': True,  # Enable JavaScript rendering
-                'timeout': 30,       # Timeout in seconds
-                'extract_text': True # Extract main content
-            }
-            
-            response = requests.post(
-                'https://api.firecrawl.com/scrape',  # Replace with actual FireCrawl endpoint
-                headers=headers,
-                json=data,
-                timeout=45
-            )
-            
-            self.active_requests -= 1  # Request completed
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get('content', '')
-                
-                if content:
-                    return content, True
-                else:
-                    self.logger.warning(f"No content returned for {url}")
-                    return "", False
-            else:
-                self.logger.error(f"FireCrawl API error: {response.status_code} - {response.text}")
-                return "", False
-                
-        except Exception as e:
-            self.active_requests -= 1  # Request failed
-            self.logger.error(f"Exception in FireCrawl scrape_url for {url}: {str(e)}")
-            return "", False
-    
-    def extract_headings(self, url: str) -> Dict[str, List[str]]:
-        """
-        Extract headings from a webpage using FireCrawl.
-        Returns: Dictionary with h1, h2, h3 lists
-        """
-        try:
-            # Wait for rate limit and concurrency slots
-            self._wait_for_rate_limit()
-            self._wait_for_concurrency()
-            
-            # Track request
-            self.active_requests += 1
-            self.request_times.append(time.time())
-            
-            # Make API request to FireCrawl
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            data = {
-                'url': url,
-                'javascript': True,
-                'timeout': 30,
-                'extract_headings': True  # Extract headings specifically
-            }
-            
-            response = requests.post(
-                'https://api.firecrawl.com/scrape',  # Replace with actual FireCrawl endpoint
-                headers=headers,
-                json=data,
-                timeout=45
-            )
-            
-            self.active_requests -= 1  # Request completed
-            
-            if response.status_code == 200:
-                result = response.json()
-                headings = result.get('headings', {})
-                
-                # Ensure proper structure
-                structured_headings = {
-                    'h1': headings.get('h1', []),
-                    'h2': headings.get('h2', []),
-                    'h3': headings.get('h3', [])
-                }
-                
-                return structured_headings
-            else:
-                self.logger.error(f"FireCrawl API error: {response.status_code} - {response.text}")
-                return {'h1': [], 'h2': [], 'h3': []}
-                
-        except Exception as e:
-            self.active_requests -= 1  # Request failed
-            self.logger.error(f"Exception in FireCrawl extract_headings for {url}: {str(e)}")
-            return {'h1': [], 'h2': [], 'h3': []}
-    
-    def batch_scrape(self, urls: List[str]) -> List[Tuple[str, str, bool]]:
-        """
-        Scrape multiple URLs with concurrency control.
-        Returns: List of (url, content, success_status) tuples
-        """
-        results = []
-        
-        for url in urls:
-            content, success = self.scrape_url(url)
-            results.append((url, content, success))
-        
-        return results
-
-###############################################################################
-# 3. API Integration - DataForSEO
+# 2. API Integration - DataForSEO
 ###############################################################################
 
 def classify_page_type(url: str, title: str, snippet: str) -> str:
@@ -303,7 +138,7 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
                 organic_results = []
                 for item in results.get('items', []):
                     if item.get('type') == 'organic':
-                        if len(organic_results) < 20:  # Increased to 20 for better clustering
+                        if len(organic_results) < 10:  # Limit to top 10
                             # Get title and snippet for classification
                             title = item.get('title', '')
                             snippet = item.get('snippet', '')
@@ -408,7 +243,7 @@ def fetch_serp_results(keyword: str, api_login: str, api_password: str) -> Tuple
         return [], [], [], False
 
 ###############################################################################
-# 4. API Integration - DataForSEO for Keywords
+# 3. API Integration - DataForSEO for Keywords
 ###############################################################################
 
 def fetch_keyword_suggestions(keyword: str, api_login: str, api_password: str) -> Tuple[List[Dict], bool]:
@@ -588,21 +423,16 @@ def fetch_related_keywords_dataforseo(keyword: str, api_login: str, api_password
         return fetch_keyword_suggestions(keyword, api_login, api_password)
 
 ###############################################################################
-# 5. Web Scraping and Content Analysis
+# 4. Web Scraping and Content Analysis
 ###############################################################################
 
-def scrape_webpage(url: str, firecrawl_api_key: str = None) -> Tuple[str, bool]:
+def scrape_webpage(url: str) -> Tuple[str, bool]:
     """
-    Enhanced webpage scraping using FireCrawl if API key provided, otherwise fallback to trafilatura
+    Enhanced webpage scraping with better error handling
     Returns: content, success_status
     """
     try:
-        # Use FireCrawl if API key is provided
-        if firecrawl_api_key:
-            firecrawl = FireCrawl(firecrawl_api_key)
-            return firecrawl.scrape_url(url)
-        
-        # Otherwise, use trafilatura as fallback
+        # Use trafilatura without headers parameter
         downloaded = trafilatura.fetch_url(url)
         if downloaded:
             content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
@@ -661,17 +491,12 @@ def scrape_webpage(url: str, firecrawl_api_key: str = None) -> Tuple[str, bool]:
         logger.error(error_msg)
         return f"[Error: {str(e)}]", False
 
-def extract_headings(url: str, firecrawl_api_key: str = None) -> Dict[str, List[str]]:
+def extract_headings(url: str) -> Dict[str, List[str]]:
     """
-    Extract headings (H1, H2, H3) from a webpage using FireCrawl if API key provided
+    Extract headings (H1, H2, H3) from a webpage
     """
     try:
-        # Use FireCrawl if API key is provided
-        if firecrawl_api_key:
-            firecrawl = FireCrawl(firecrawl_api_key)
-            return firecrawl.extract_headings(url)
-        
-        # Fallback to traditional method
+        # List of common user agents to rotate
         user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
@@ -710,7 +535,713 @@ def extract_headings(url: str, firecrawl_api_key: str = None) -> Dict[str, List[
         return {'h1': [], 'h2': [], 'h3': []}
 
 ###############################################################################
-# 6. Content Clustering and Corpus Analysis
+# 5. Content Scoring Functions
+###############################################################################
+
+def extract_important_terms(competitor_contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
+    """
+    Extract important terms and topics from competitor content using Claude 3.7 Sonnet
+    Returns: term_data, success_status
+    """
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Combine all content for analysis
+        combined_content = "\n\n".join([c.get('content', '') for c in competitor_contents if c.get('content')])
+        
+        # Prepare summarized content if it's too long
+        if len(combined_content) > 10000:
+            combined_content = combined_content[:10000]
+        
+        # Use Claude to analyze content and extract important terms
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1500,
+            system="You are an SEO expert specializing in content analysis.",
+            messages=[
+                {"role": "user", "content": f"""
+                Analyze the following content from top-ranking pages and extract:
+                
+                1. Primary terms (most important for this topic, maximum 15 terms)
+                2. Secondary terms (supporting terms for this topic, maximum 20 terms)
+                3. Questions being answered (maximum 10 questions)
+                4. Topics that need to be covered (maximum 10 topics)
+                
+                Format your response as JSON:
+                {{
+                    "primary_terms": [
+                        {{"term": "term1", "importance": 0.95, "recommended_usage": 5}},
+                        {{"term": "term2", "importance": 0.85, "recommended_usage": 3}},
+                        ...
+                    ],
+                    "secondary_terms": [
+                        {{"term": "term1", "importance": 0.75, "recommended_usage": 2}},
+                        {{"term": "term2", "importance": 0.65, "recommended_usage": 1}},
+                        ...
+                    ],
+                    "questions": [
+                        "Question 1?",
+                        "Question 2?",
+                        ...
+                    ],
+                    "topics": [
+                        {{"topic": "Topic 1", "description": "This topic covers..."}},
+                        {{"topic": "Topic 2", "description": "This topic covers..."}},
+                        ...
+                    ]
+                }}
+                
+                Content to analyze:
+                {combined_content}
+                """}
+            ],
+            temperature=0.3
+        )
+        
+        # Extract and parse JSON response
+        content = response.content[0].text
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        term_data = json.loads(content)
+        return term_data, True
+    
+    except Exception as e:
+        error_msg = f"Exception in extract_important_terms: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
+def score_content(content: str, term_data: Dict, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Score content based on keyword usage, semantic relevance, and comprehensiveness
+    Returns: score_data, success_status
+    """
+    try:
+        # Initialize scores
+        keyword_score = 0
+        primary_terms_score = 0
+        secondary_terms_score = 0
+        topic_coverage_score = 0
+        question_coverage_score = 0
+        
+        # Score primary keyword usage - IMPROVED SCORING
+        keyword_count = len(re.findall(r'\b' + re.escape(keyword.lower()) + r'\b', content.lower()))
+        word_count = len(re.findall(r'\b\w+\b', content))
+        optimal_keyword_count = max(2, min(10, int(word_count * 0.01)))  # Between 0.5% and 2%
+
+        # Calculate keyword score (max 100)
+        if keyword_count > 0:
+            if keyword_count <= optimal_keyword_count:
+                # Perfect score when usage is at or below optimal
+                keyword_score = (keyword_count / optimal_keyword_count) * 100
+            else:
+                # More generous penalty for overuse - starts penalizing after 1.5x optimal
+                excessive_ratio = keyword_count / optimal_keyword_count
+                if excessive_ratio <= 1.5:  # Allow up to 150% of optimal without penalty
+                    keyword_score = 100
+                else:
+                    # Scale penalty more gradually
+                    penalty = (excessive_ratio - 1.5) * 25  # Only 25% reduction per 100% over the 1.5x threshold
+                    keyword_score = max(60, 100 - penalty)  # Floor of 60%
+        
+        # Score primary terms
+        primary_term_found = 0
+        primary_terms_total = len(term_data.get('primary_terms', []))
+        primary_term_counts = {}
+        
+        if primary_terms_total > 0:
+            for term_data_item in term_data.get('primary_terms', []):
+                term = term_data_item.get('term', '')
+                if term:
+                    term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                    primary_term_counts[term] = {
+                        'count': term_count,
+                        'importance': term_data_item.get('importance', 0),
+                        'recommended': term_data_item.get('recommended_usage', 1)
+                    }
+                    
+                    if term_count > 0:
+                        primary_term_found += 1
+                        
+                        # Bonus for optimal usage
+                        if term_count >= term_data_item.get('recommended_usage', 1):
+                            if term_count <= term_data_item.get('recommended_usage', 1) * 2:
+                                primary_term_found += 0.2
+                    
+            primary_terms_score = (primary_term_found / primary_terms_total) * 100
+            
+        # Score secondary terms
+        secondary_term_found = 0
+        secondary_terms_total = len(term_data.get('secondary_terms', []))
+        secondary_term_counts = {}
+        
+        if secondary_terms_total > 0:
+            for term_data_item in term_data.get('secondary_terms', []):
+                term = term_data_item.get('term', '')
+                if term:
+                    term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                    secondary_term_counts[term] = {
+                        'count': term_count,
+                        'importance': term_data_item.get('importance', 0),
+                        'recommended': term_data_item.get('recommended_usage', 1)
+                    }
+                    
+                    if term_count > 0:
+                        secondary_term_found += 1
+                        
+            secondary_terms_score = (secondary_term_found / secondary_terms_total) * 100
+        
+        # Score topic coverage - IMPROVED SEMANTIC DETECTION
+        topics_covered = 0
+        topics_total = len(term_data.get('topics', []))
+        topic_coverage = {}
+        
+        if topics_total > 0:
+            content_lower = content.lower()
+            
+            for topic_data in term_data.get('topics', []):
+                topic = topic_data.get('topic', '')
+                description = topic_data.get('description', '')
+                
+                if topic:
+                    # Extract key terms from both topic and its description
+                    topic_terms = set(re.findall(r'\b\w{3,}\b', topic.lower()))
+                    if description:
+                        desc_terms = set(re.findall(r'\b\w{3,}\b', description.lower()))
+                        # Combine important terms
+                        key_terms = topic_terms.union(desc_terms)
+                    else:
+                        key_terms = topic_terms
+                    
+                    # Remove common words that aren't meaningful for matching
+                    common_words = {'the', 'and', 'for', 'that', 'with', 'this', 'what', 'how', 
+                                   'why', 'when', 'where', 'will', 'can', 'your', 'you', 'these',
+                                   'those', 'them', 'they', 'some', 'have', 'has', 'had', 'are',
+                                   'our', 'their', 'were', 'was', 'not', 'from', 'about'}
+                    
+                    key_terms = {term for term in key_terms if term not in common_words and len(term) > 2}
+                    
+                    # Calculate what percentage of key terms are found
+                    if key_terms:
+                        found_terms = sum(1 for term in key_terms if term in content_lower)
+                        match_ratio = found_terms / len(key_terms)
+                        
+                        # Consider covered if enough key terms are found or exact match
+                        is_covered = match_ratio >= 0.4 or topic.lower() in content_lower
+                    else:
+                        # Fall back to exact matching if no key terms
+                        is_covered = topic.lower() in content_lower
+                        match_ratio = 1.0 if is_covered else 0.0
+                    
+                    topic_coverage[topic] = {
+                        'covered': is_covered,
+                        'match_ratio': match_ratio,
+                        'description': description,
+                        'terms_found': match_ratio if key_terms else 0
+                    }
+                    
+                    if is_covered:
+                        topics_covered += 1
+            
+            topic_coverage_score = (topics_covered / topics_total) * 100
+        
+        # Score question coverage
+        questions_answered = 0
+        questions_total = len(term_data.get('questions', []))
+        question_coverage = {}
+        
+        if questions_total > 0:
+            for question in term_data.get('questions', []):
+                core_question = question.replace('?', '').lower()
+                
+                # Look for core keywords from the question
+                question_words = re.findall(r'\b\w+\b', core_question)
+                significant_words = [w for w in question_words if len(w) > 3 and w not in ['what', 'when', 'where', 'which', 'who', 'why', 'how']]
+                
+                # Count how many significant words appear
+                matches = sum(1 for word in significant_words if word in content.lower())
+                match_ratio = 0
+                if significant_words:
+                    match_ratio = matches / len(significant_words)
+                
+                # If most significant words appear, consider the question answered
+                is_answered = match_ratio >= 0.7
+                question_coverage[question] = {
+                    'answered': is_answered,
+                    'match_ratio': match_ratio
+                }
+                
+                if is_answered:
+                    questions_answered += 1
+            
+            question_coverage_score = (questions_answered / questions_total) * 100
+        
+        # Calculate overall score (weighted)
+        overall_score = (
+            keyword_score * 0.2 +
+            primary_terms_score * 0.35 +
+            secondary_terms_score * 0.15 +
+            topic_coverage_score * 0.2 +
+            question_coverage_score * 0.1
+        )
+        
+        # Compile detailed results
+        score_data = {
+            'overall_score': round(overall_score),
+            'components': {
+                'keyword_score': round(keyword_score),
+                'primary_terms_score': round(primary_terms_score),
+                'secondary_terms_score': round(secondary_terms_score),
+                'topic_coverage_score': round(topic_coverage_score),
+                'question_coverage_score': round(question_coverage_score)
+            },
+            'details': {
+                'word_count': word_count,
+                'keyword_count': keyword_count,
+                'optimal_keyword_count': optimal_keyword_count,
+                'primary_terms_found': primary_term_found,
+                'primary_terms_total': primary_terms_total,
+                'primary_term_counts': primary_term_counts,
+                'secondary_terms_found': secondary_term_found,
+                'secondary_terms_total': secondary_terms_total,
+                'secondary_term_counts': secondary_term_counts,
+                'topics_covered': topics_covered,
+                'topics_total': topics_total,
+                'topic_coverage': topic_coverage,
+                'questions_answered': questions_answered,
+                'questions_total': questions_total,
+                'question_coverage': question_coverage
+            },
+            'grade': get_score_grade(overall_score)
+        }
+        
+        return score_data, True
+    
+    except Exception as e:
+        error_msg = f"Exception in score_content: {str(e)}"
+        logger.error(error_msg)
+        return {'overall_score': 0}, False
+
+def get_score_grade(score: float) -> str:
+    """Convert numeric score to letter grade"""
+    if score >= 90:
+        return "A+"
+    elif score >= 85:
+        return "A"
+    elif score >= 80:
+        return "A-"
+    elif score >= 75:
+        return "B+"
+    elif score >= 70:
+        return "B"
+    elif score >= 65:
+        return "B-"
+    elif score >= 60:
+        return "C+"
+    elif score >= 55:
+        return "C"
+    elif score >= 50:
+        return "C-"
+    elif score >= 40:
+        return "D"
+    else:
+        return "F"
+
+def highlight_keywords_in_content(content: str, term_data: Dict, keyword: str) -> Tuple[str, bool]:
+    """
+    Highlight primary and secondary keywords in content with different colors
+    Returns: highlighted_html, success_status
+    """
+    try:
+        # Create a copy of the content for highlighting
+        highlighted_content = content
+        
+        # Function to wrap term with color
+        def wrap_with_span(match, color):
+            term = match.group(0)
+            return f'<span style="background-color: {color};">{term}</span>'
+        
+        # Highlight primary keyword
+        pattern = re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+        highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#FFEB9C"), highlighted_content)
+        
+        # Highlight primary terms
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            if term and term.lower() != keyword.lower():
+                pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+                highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#CDFFD8"), highlighted_content)
+        
+        # Highlight secondary terms
+        for term_info in term_data.get('secondary_terms', []):
+            term = term_info.get('term', '')
+            if term:
+                pattern = re.compile(r'\b' + re.escape(term) + r'\b', re.IGNORECASE)
+                highlighted_content = pattern.sub(lambda m: wrap_with_span(m, "#E6F3FF"), highlighted_content)
+        
+        return highlighted_content, True
+    
+    except Exception as e:
+        error_msg = f"Exception in highlight_keywords_in_content: {str(e)}"
+        logger.error(error_msg)
+        return content, False
+
+def get_content_improvement_suggestions(content: str, term_data: Dict, score_data: Dict, keyword: str) -> Tuple[Dict, bool]:
+    """
+    Generate suggestions for improving content based on scoring results
+    Returns: suggestions, success_status
+    """
+    try:
+        suggestions = {
+            'missing_terms': [],
+            'underused_terms': [],
+            'missing_topics': [],
+            'partial_topics': [],  # New category for partially covered topics
+            'unanswered_questions': [],
+            'readability_suggestions': [],
+            'structure_suggestions': []
+        }
+        
+        # Check for missing primary terms
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended_usage = term_info.get('recommended_usage', 1)
+            
+            if term:
+                term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                
+                if term_count == 0:
+                    suggestions['missing_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'type': 'primary',
+                        'current_usage': 0
+                    })
+                elif term_count < recommended_usage:
+                    suggestions['underused_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'current_usage': term_count,
+                        'type': 'primary'
+                    })
+        
+        # Check for missing secondary terms (only list important ones)
+        for term_info in term_data.get('secondary_terms', [])[:15]:  # Limit to top 15
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended_usage = term_info.get('recommended_usage', 1)
+            
+            if term and importance > 0.5:  # Only suggest important secondary terms
+                term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', content.lower()))
+                
+                if term_count == 0:
+                    suggestions['missing_terms'].append({
+                        'term': term,
+                        'importance': importance,
+                        'recommended_usage': recommended_usage,
+                        'type': 'secondary',
+                        'current_usage': 0
+                    })
+        
+        # Check for missing or partially covered topics
+        topic_coverage = score_data.get('details', {}).get('topic_coverage', {})
+        
+        for topic_info in term_data.get('topics', []):
+            topic = topic_info.get('topic', '')
+            description = topic_info.get('description', '')
+            
+            if topic:
+                if topic in topic_coverage:
+                    # Get coverage data from score results
+                    coverage_info = topic_coverage[topic]
+                    is_covered = coverage_info.get('covered', False)
+                    match_ratio = coverage_info.get('match_ratio', 0)
+                    
+                    # Fully covered topics (70%+ match) need no suggestions
+                    if match_ratio >= 0.7:
+                        continue
+                    # Partially covered topics (40-69% match) need enhancement
+                    elif is_covered:
+                        suggestions['partial_topics'].append({
+                            'topic': topic,
+                            'description': description,
+                            'match_ratio': match_ratio,
+                            'suggestion': f"Expand your coverage of {topic}. Currently at {int(match_ratio * 100)}% coverage."
+                        })
+                    # Missing topics (less than 40% match) need to be added
+                    else:
+                        suggestions['missing_topics'].append({
+                            'topic': topic,
+                            'description': description
+                        })
+                else:
+                    # Fallback if topic not found in coverage data
+                    suggestions['missing_topics'].append({
+                        'topic': topic,
+                        'description': description
+                    })
+        
+        # Check for unanswered questions
+        for question in term_data.get('questions', []):
+            core_question = question.replace('?', '').lower()
+            question_words = re.findall(r'\b\w+\b', core_question)
+            significant_words = [w for w in question_words if len(w) > 3 and w not in ['what', 'when', 'where', 'which', 'who', 'why', 'how']]
+            
+            matches = sum(1 for word in significant_words if word in content.lower())
+            
+            if not significant_words or matches < len(significant_words) * 0.7:
+                suggestions['unanswered_questions'].append(question)
+        
+        # Readability suggestions
+        word_count = score_data.get('details', {}).get('word_count', 0)
+        
+        if word_count < 300:
+            suggestions['readability_suggestions'].append("Content is too short. Aim for at least 800-1200 words for most topics.")
+        elif word_count < 800:
+            suggestions['readability_suggestions'].append("Content may be too brief. Consider expanding to 1000+ words for better topic coverage.")
+        
+        # Structure suggestions based on parsing the content
+        soup = BeautifulSoup(content, 'html.parser')
+        headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        paragraphs = soup.find_all('p')
+        
+        if len(headings) < 3:
+            suggestions['structure_suggestions'].append("Add more section headings to improve structure and readability.")
+        
+        if paragraphs:
+            # Check paragraph length
+            long_paragraphs = sum(1 for p in paragraphs if len(p.get_text().split()) > 200)
+            if long_paragraphs > 0:
+                suggestions['structure_suggestions'].append(f"Break up {long_paragraphs} long paragraph(s) into smaller chunks for better readability.")
+            
+            # Check for use of lists
+            lists = soup.find_all(['ul', 'ol'])
+            if len(lists) == 0:
+                suggestions['structure_suggestions'].append("Consider adding bulleted or numbered lists to improve scannability.")
+        
+        return suggestions, True
+    
+    except Exception as e:
+        error_msg = f"Exception in get_content_improvement_suggestions: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
+def create_content_scoring_brief(keyword: str, term_data: Dict, score_data: Dict, suggestions: Dict) -> BytesIO:
+    """
+    Create a downloadable content scoring brief with recommendations
+    Returns: document_stream
+    """
+    try:
+        doc = Document()
+        
+        # Add document title
+        doc.add_heading(f'Content Optimization Brief: {keyword}', 0)
+        
+        # Add date
+        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Overall Score
+        doc.add_heading('Content Score', level=1)
+        score_para = doc.add_paragraph()
+        score_para.add_run(f"Overall Score: ").bold = True
+        score_run = score_para.add_run(f"{score_data.get('overall_score', 0)} ({score_data.get('grade', 'F')})")
+        
+        overall_score = score_data.get('overall_score', 0)
+        if overall_score >= 70:
+            score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+        elif overall_score < 50:
+            score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+        else:
+            score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+
+        # Component scores
+        components = score_data.get('components', {})
+        table = doc.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
+        
+        header_cells = table.rows[0].cells
+        header_cells[0].text = 'Component'
+        header_cells[1].text = 'Score'
+        
+        for component, score in components.items():
+            formatted_component = component.replace('_score', '').replace('_', ' ').title()
+            row_cells = table.add_row().cells
+            row_cells[0].text = formatted_component
+            row_cells[1].text = str(score)
+        
+        # Primary Terms to Include
+        doc.add_heading('Primary Terms to Include', level=1)
+        
+        primary_terms_table = doc.add_table(rows=1, cols=4)
+        primary_terms_table.style = 'Table Grid'
+        
+        header_cells = primary_terms_table.rows[0].cells
+        header_cells[0].text = 'Term'
+        header_cells[1].text = 'Importance'
+        header_cells[2].text = 'Recommended Usage'
+        header_cells[3].text = 'Current Usage'
+        
+        primary_term_counts = score_data.get('details', {}).get('primary_term_counts', {})
+        
+        for term_info in term_data.get('primary_terms', []):
+            term = term_info.get('term', '')
+            importance = term_info.get('importance', 0)
+            recommended = term_info.get('recommended_usage', 1)
+            
+            current_count = 0
+            if term in primary_term_counts:
+                current_count = primary_term_counts[term].get('count', 0)
+            
+            row_cells = primary_terms_table.add_row().cells
+            row_cells[0].text = term
+            row_cells[1].text = f"{importance:.2f}"
+            row_cells[2].text = str(recommended)
+            row_cells[3].text = str(current_count)
+            
+            # Highlight issues
+            if current_count == 0:
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            elif current_count < recommended:
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+        
+        # Content Gaps
+        doc.add_heading('Content Gaps to Address', level=1)
+        
+        # Missing Topics
+        if suggestions.get('missing_topics'):
+            doc.add_heading('Missing Topics', level=2)
+            for topic in suggestions.get('missing_topics', []):
+                topic_para = doc.add_paragraph(style='List Bullet')
+                topic_para.add_run(topic.get('topic', '')).bold = True
+                topic_para.add_run(f": {topic.get('description', '')}")
+        
+        # Unanswered Questions
+        if suggestions.get('unanswered_questions'):
+            doc.add_heading('Questions to Answer', level=2)
+            for question in suggestions.get('unanswered_questions', []):
+                q_para = doc.add_paragraph(style='List Bullet')
+                q_para.add_run(question)
+        
+        # Structure Recommendations
+        if suggestions.get('structure_suggestions') or suggestions.get('readability_suggestions'):
+            doc.add_heading('Structure & Readability Recommendations', level=1)
+            
+            for suggestion in suggestions.get('structure_suggestions', []):
+                s_para = doc.add_paragraph(style='List Bullet')
+                s_para.add_run(suggestion)
+            
+            for suggestion in suggestions.get('readability_suggestions', []):
+                r_para = doc.add_paragraph(style='List Bullet')
+                r_para.add_run(suggestion)
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream
+    
+    except Exception as e:
+        error_msg = f"Exception in create_content_scoring_brief: {str(e)}"
+        logger.error(error_msg)
+        return BytesIO()
+
+###############################################################################
+# 6. Meta Title and Description Generation
+###############################################################################
+
+def generate_meta_tags(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], term_data: Dict, 
+                      anthropic_api_key: str) -> Tuple[str, str, bool]:
+    """
+    Generate optimized meta title and description for the content
+    Returns: meta_title, meta_description, success_status
+    """
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Extract H1 and first few sections for context
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        
+        # Get top 5 related keywords
+        top_keywords = ", ".join([kw.get('keyword', '') for kw in related_keywords[:5] if kw.get('keyword')])
+        
+        # Get primary terms if available
+        primary_terms = []
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = [term.get('term') for term in term_data.get('primary_terms', [])[:5]]
+        
+        primary_terms_str = ", ".join(primary_terms) if primary_terms else top_keywords
+        
+        # Generate meta tags
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=300,
+            system="You are an SEO specialist who creates optimized meta tags.",
+            messages=[
+                {"role": "user", "content": f"""
+                Create an SEO-optimized meta title and description for an article about "{keyword}".
+                
+                The article's main heading is: "{h1}"
+                
+                Primary terms to include: {primary_terms_str}
+                Related keywords to consider: {top_keywords}
+                
+                Guidelines:
+                1. Meta title: 50-60 characters, include primary keyword near the beginning
+                2. Meta description: 150-160 characters, include primary and secondary keywords
+                3. Be compelling, accurate, and include a call to action in the description
+                4. Avoid clickbait, use natural language
+                
+                Format your response as JSON:
+                {{
+                    "meta_title": "Your optimized meta title here",
+                    "meta_description": "Your optimized meta description here"
+                }}
+                """}
+            ],
+            temperature=0.7
+        )
+        
+        # Extract and parse JSON response
+        content = response.content[0].text
+        # Find JSON content within response (in case there's additional text)
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        meta_data = json.loads(content)
+        
+        # Extract meta tags
+        meta_title = meta_data.get('meta_title', f"{h1} | Your Ultimate Guide")
+        meta_description = meta_data.get('meta_description', f"Learn everything about {keyword} in our comprehensive guide. Discover tips, best practices, and expert advice to master {keyword} today.")
+        
+        # Truncate if too long
+        if len(meta_title) > 60:
+            meta_title = meta_title[:57] + "..."
+        
+        if len(meta_description) > 160:
+            meta_description = meta_description[:157] + "..."
+        
+        return meta_title, meta_description, True
+    
+    except Exception as e:
+        error_msg = f"Exception in generate_meta_tags: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return f"{keyword} - Complete Guide", f"Learn everything about {keyword} in our comprehensive guide. Discover expert tips and best practices.", False
+
+###############################################################################
+# 7. Embeddings and Semantic Analysis
 ###############################################################################
 
 def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedding-3-large") -> Tuple[List[float], bool]:
@@ -737,668 +1268,718 @@ def generate_embedding(text: str, openai_api_key: str, model: str = "text-embedd
         logger.error(error_msg)
         return [], False
 
-def _cluster_competitors(competitor_contents: List[Dict], openai_api_key: str, num_clusters: int = 5) -> Tuple[List[Dict], bool]:
+def analyze_semantic_structure(contents: List[Dict], anthropic_api_key: str) -> Tuple[Dict, bool]:
     """
-    Cluster competitor content using OpenAI embeddings and FAISS K-means.
-    Returns: clustered_competitors, success_status
-    """
-    try:
-        # Generate embeddings for all competitor content
-        embeddings = []
-        valid_competitors = []
-        
-        for i, competitor in enumerate(competitor_contents):
-            content = competitor.get('content', '')
-            if not content or len(content) < 200:  # Skip if too short
-                continue
-                
-            embedding, success = generate_embedding(content, openai_api_key)
-            
-            if success and embedding:
-                embeddings.append(embedding)
-                valid_competitors.append(competitor)
-        
-        if not embeddings or len(embeddings) < 2:
-            logger.error("Not enough valid content to cluster")
-            return competitor_contents, False
-        
-        # Convert to numpy array
-        embedding_array = np.array(embeddings).astype('float32')
-        
-        # Initialize FAISS index
-        dimension = len(embeddings[0])
-        
-        # Normalize vectors for cosine similarity
-        faiss.normalize_L2(embedding_array)
-        
-        # Use KMeans clustering
-        actual_clusters = min(num_clusters, len(embedding_array))
-        kmeans = faiss.Kmeans(dimension, actual_clusters, niter=20, verbose=False)
-        kmeans.train(embedding_array)
-        
-        # Get cluster assignments
-        _, assignments = kmeans.index.search(embedding_array, 1)
-        
-        # Add cluster info to competitors
-        for i, cluster_id in enumerate(assignments.flatten()):
-            valid_competitors[i]['cluster'] = int(cluster_id)
-        
-        # Sort by cluster for easy access
-        clustered_competitors = sorted(valid_competitors, key=lambda x: x.get('cluster', 0))
-        
-        return clustered_competitors, True
-    
-    except Exception as e:
-        error_msg = f"Exception in _cluster_competitors: {str(e)}"
-        logger.error(error_msg)
-        return competitor_contents, False
-
-def build_lexical_corpus(competitor_contents: List[Dict]) -> Dict:
-    """
-    Build a lexical corpus from competitor contents including heading frequencies and keyword usage.
-    Returns: corpus data
-    """
-    corpus = {
-        'heading_counts': {
-            'h2': Counter(),
-            'h3': Counter(),
-        },
-        'keyword_frequency': Counter(),
-        'content_lengths': [],
-        'sentence_starters': Counter(),
-    }
-    
-    for competitor in competitor_contents:
-        # Extract headings
-        headings = competitor.get('headings', {})
-        
-        # Count H2 and H3 headings
-        for h2 in headings.get('h2', []):
-            corpus['heading_counts']['h2'][h2.lower()] += 1
-            
-        for h3 in headings.get('h3', []):
-            corpus['heading_counts']['h3'][h3.lower()] += 1
-        
-        # Extract content for keyword analysis
-        content = competitor.get('content', '')
-        if content:
-            # Count content length
-            corpus['content_lengths'].append(len(content.split()))
-            
-            # Extract keywords (simple approach - more sophisticated NLP could be used)
-            words = re.findall(r'\b\w+\b', content.lower())
-            for word in words:
-                if len(word) > 3:  # Skip short words
-                    corpus['keyword_frequency'][word] += 1
-            
-            # Analyze sentence starters (for variety checking)
-            sentences = re.split(r'[.!?]', content)
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if len(sentence) > 10:  # Skip too short sentences
-                    # Get first 3 words (3-gram prefix)
-                    words = sentence.split()
-                    if len(words) >= 3:
-                        prefix = ' '.join(words[:3]).lower()
-                        corpus['sentence_starters'][prefix] += 1
-    
-    return corpus
-
-###############################################################################
-# 7. Content Readability and Linting
-###############################################################################
-
-def lint_article(article_content: str, keyword: str, term_data: Dict) -> Dict:
-    """
-    Analyze article content for readability, keyword density, and sentence variety
-    Returns: lint results
-    """
-    results = {
-        'readability': {
-            'score': 0,
-            'grade_level': '',
-            'issues': []
-        },
-        'keyword_density': {
-            'score': 0,
-            'primary_keyword': {'term': keyword, 'count': 0, 'density': 0, 'status': 'good'},
-            'primary_terms': [],
-            'issues': []
-        },
-        'sentence_variety': {
-            'score': 0,
-            'repeat_patterns': [],
-            'issues': []
-        }
-    }
-    
-    # Clean HTML tags for analysis
-    clean_text = re.sub(r'<[^>]+>', ' ', article_content)
-    
-    # 1. Readability Analysis
-    try:
-        readability_score = flesch_reading_ease(clean_text)
-        grade_level = text_standard(clean_text)
-        
-        results['readability']['score'] = readability_score
-        results['readability']['grade_level'] = grade_level
-        
-        # Interpret Flesch Reading Ease score
-        if readability_score < 30:
-            results['readability']['issues'].append("Text is very difficult to read. Consider simplifying.")
-        elif readability_score < 50:
-            results['readability']['issues'].append("Text is difficult to read. Consider using shorter sentences and simpler words.")
-        elif readability_score > 80:
-            results['readability']['issues'].append("Text may be too simplistic for professional content.")
-    except Exception as e:
-        results['readability']['issues'].append(f"Error analyzing readability: {str(e)}")
-    
-    # 2. Keyword Density Analysis
-    try:
-        # Count words
-        words = re.findall(r'\b\w+\b', clean_text.lower())
-        word_count = len(words)
-        
-        if word_count == 0:
-            results['keyword_density']['issues'].append("No text content found for analysis.")
-            return results
-        
-        # Primary keyword density
-        keyword_lower = keyword.lower()
-        primary_count = len(re.findall(r'\b' + re.escape(keyword_lower) + r'\b', clean_text.lower()))
-        primary_density = (primary_count / word_count) * 100
-        
-        results['keyword_density']['primary_keyword']['count'] = primary_count
-        results['keyword_density']['primary_keyword']['density'] = primary_density
-        
-        # Evaluate primary keyword density
-        if primary_density == 0:
-            results['keyword_density']['primary_keyword']['status'] = 'missing'
-            results['keyword_density']['issues'].append(f"Primary keyword '{keyword}' not found in content.")
-        elif primary_density < 0.5:
-            results['keyword_density']['primary_keyword']['status'] = 'low'
-            results['keyword_density']['issues'].append(f"Primary keyword '{keyword}' density is low ({primary_density:.2f}%).")
-        elif primary_density > 2.5:
-            results['keyword_density']['primary_keyword']['status'] = 'over'
-            results['keyword_density']['issues'].append(f"Primary keyword '{keyword}' may be overused ({primary_density:.2f}%).")
-        else:
-            results['keyword_density']['primary_keyword']['status'] = 'good'
-        
-        # Analyze primary terms from term_data
-        if 'primary_terms' in term_data:
-            for term_info in term_data['primary_terms'][:10]:  # Top 10 primary terms
-                term = term_info.get('term', '')
-                if term.lower() != keyword_lower:  # Skip main keyword
-                    term_count = len(re.findall(r'\b' + re.escape(term.lower()) + r'\b', clean_text.lower()))
-                    term_density = (term_count / word_count) * 100
-                    recommended = term_info.get('recommended_usage', 1)
-                    
-                    term_status = 'good'
-                    if term_count == 0:
-                        term_status = 'missing'
-                    elif term_count < recommended:
-                        term_status = 'low'
-                    elif term_count > recommended * 2:
-                        term_status = 'over'
-                    
-                    results['keyword_density']['primary_terms'].append({
-                        'term': term,
-                        'count': term_count,
-                        'density': term_density,
-                        'recommended': recommended,
-                        'status': term_status
-                    })
-                    
-                    if term_status == 'missing':
-                        results['keyword_density']['issues'].append(f"Primary term '{term}' not found in content.")
-                    elif term_status == 'low':
-                        results['keyword_density']['issues'].append(f"Primary term '{term}' appears {term_count} times (recommended: {recommended}).")
-    except Exception as e:
-        results['keyword_density']['issues'].append(f"Error analyzing keyword density: {str(e)}")
-    
-    # 3. Sentence Variety Analysis
-    try:
-        # Split into sentences
-        sentences = re.split(r'[.!?]', clean_text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
-        
-        # Check for 3-gram prefix repetition
-        prefixes = []
-        for sentence in sentences:
-            words = sentence.split()
-            if len(words) >= 3:
-                prefix = ' '.join(words[:3]).lower()
-                prefixes.append(prefix)
-        
-        # Count prefix frequencies
-        prefix_counter = Counter(prefixes)
-        
-        # Find repeating patterns (>=5 occurrences)
-        repeat_patterns = [(prefix, count) for prefix, count in prefix_counter.items() if count >= 5]
-        
-        results['sentence_variety']['repeat_patterns'] = repeat_patterns
-        
-        # Add issues for repeating patterns
-        for prefix, count in repeat_patterns:
-            results['sentence_variety']['issues'].append(
-                f"Sentence pattern '{prefix}...' is used {count} times. Vary your sentence structure."
-            )
-        
-        # Calculate variety score
-        if len(sentences) > 0:
-            unique_ratio = len(prefix_counter) / len(prefixes)
-            variety_score = unique_ratio * 100
-            results['sentence_variety']['score'] = variety_score
-            
-            if variety_score < 70:
-                results['sentence_variety']['issues'].append(
-                    f"Low sentence variety score ({variety_score:.1f}%). Vary your sentence structures more."
-                )
-    except Exception as e:
-        results['sentence_variety']['issues'].append(f"Error analyzing sentence variety: {str(e)}")
-    
-    return results
-
-###############################################################################
-# 8. Enhanced Writer Guide with Section Explanations
-###############################################################################
-
-def generate_writer_guide(keyword: str, semantic_structure: Dict, corpus: Dict, 
-                        term_data: Dict, anthropic_api_key: str) -> Tuple[Dict, bool]:
-    """
-    Generate detailed writing guidance with explanations for each section
-    Returns: writer_guide, success_status
+    Analyze semantic structure of content to determine optimal hierarchy
+    Returns: semantic_analysis, success_status
     """
     try:
         client = anthropic.Anthropic(api_key=anthropic_api_key)
         
-        # Create a guide structure with section explanations
-        writer_guide = {
-            'h1': {
-                'heading': semantic_structure.get('h1', f"Complete Guide to {keyword}"),
-                'guidance': '',
-                'why_it_matters': ''
-            },
-            'sections': []
-        }
+        # Combine all content for analysis
+        combined_content = "\n\n".join([c.get('content', '') for c in contents if c.get('content')])
         
-        # Extract top headings from corpus for context
-        top_h2_headings = corpus['heading_counts']['h2'].most_common(10)
-        top_h3_headings = corpus['heading_counts']['h3'].most_common(15)
+        # Prepare summarized content if it's too long
+        if len(combined_content) > 10000:
+            combined_content = combined_content[:10000]
         
-        # Format headings for prompt
-        top_headings_text = "Top competitor H2 headings:\n"
-        for heading, count in top_h2_headings:
-            top_headings_text += f"- {heading} (appears {count} times)\n"
-            
-        top_headings_text += "\nTop competitor H3 headings:\n"
-        for heading, count in top_h3_headings:
-            top_headings_text += f"- {heading} (appears {count} times)\n"
+        # Use Claude to analyze content and suggest headings structure
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1000,
+            system="You are an SEO expert specializing in content structure.",
+            messages=[
+                {"role": "user", "content": f"""
+                Analyze the following content from top-ranking pages and recommend an optimal semantic hierarchy 
+                for a new article on this topic. Include:
+                
+                1. A recommended H1 title
+                2. 5-7 H2 section headings
+                3. 2-3 H3 subheadings under each H2
+                
+                Format your response as JSON:
+                {{
+                    "h1": "Recommended H1 Title",
+                    "sections": [
+                        {{
+                            "h2": "First H2 Section",
+                            "subsections": [
+                                {{"h3": "First H3 Subsection"}},
+                                {{"h3": "Second H3 Subsection"}}
+                            ]
+                        }},
+                        ...more sections...
+                    ]
+                }}
+                
+                Content to analyze:
+                {combined_content}
+                """}
+            ],
+            temperature=0.3
+        )
         
-        # Get primary terms info
-        primary_terms_text = "Key terms to include:\n"
-        if 'primary_terms' in term_data:
-            for term_info in term_data['primary_terms'][:10]:
+        # Extract and parse JSON response
+        content = response.content[0].text
+        # Find JSON content within response (in case there's additional text)
+        json_match = re.search(r'({.*})', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        
+        semantic_analysis = json.loads(content)
+        return semantic_analysis, True
+    
+    except Exception as e:
+        error_msg = f"Exception in analyze_semantic_structure: {str(e)}"
+        logger.error(error_msg)
+        return {}, False
+
+###############################################################################
+# 8. Content Generation
+###############################################################################
+
+def generate_article(keyword: str, semantic_structure: Dict, related_keywords: List[Dict], 
+                     serp_features: List[Dict], paa_questions: List[Dict], term_data: Dict, 
+                     anthropic_api_key: str, guidance_only: bool = False) -> Tuple[str, bool]:
+    """
+    Generate comprehensive article with natural language flow and balanced keyword usage.
+    If guidance_only is True, will generate writing guidance instead of full content.
+    Uses Claude 3.5 Sonnet to optimize for important terms and proper length.
+    Returns: article_content, success_status
+    """
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Ensure semantic_structure is valid
+        if not semantic_structure:
+            semantic_structure = {"h1": f"Guide to {keyword}", "sections": []}
+        
+        # Get default H1 if not present
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        
+        # Use ALL sections and subsections from the semantic structure
+        sections = semantic_structure.get('sections', [])
+        
+        # Prepare section structure with error handling
+        sections_str = ""
+        for section in sections:
+            if section and isinstance(section, dict) and 'h2' in section:
+                sections_str += f"- {section.get('h2')}\n"
+                # Include all subsections
+                for subsection in section.get('subsections', []):
+                    if subsection and isinstance(subsection, dict) and 'h3' in subsection:
+                        sections_str += f"  - {subsection.get('h3')}\n"
+        
+        # Add default section if none exist
+        if not sections_str:
+            sections_str = f"- Introduction to {keyword}\n- Key Benefits\n- How to Use\n- Conclusion\n"
+        
+        # Prepare related keywords with error handling
+        related_kw_list = []
+        if related_keywords and isinstance(related_keywords, list):
+            for kw in related_keywords[:5]:  # LIMIT to top 5 only
+                if kw and isinstance(kw, dict) and 'keyword' in kw:
+                    related_kw_list.append(kw.get('keyword', ''))
+        
+        # Add default keywords if none exist
+        if not related_kw_list:
+            related_kw_list = [f"{keyword} guide", f"best {keyword}", f"{keyword} tips"]
+        
+        related_kw_str = ", ".join(related_kw_list)
+        
+        # Prepare SERP features with error handling
+        serp_features_list = []
+        if serp_features and isinstance(serp_features, list):
+            for feature in serp_features[:3]:  # LIMIT to top 3 only
+                if feature and isinstance(feature, dict) and 'feature_type' in feature:
+                    count = feature.get('count', 1)
+                    serp_features_list.append(f"{feature.get('feature_type')} ({count})")
+        
+        # Add default features if none exist
+        if not serp_features_list:
+            serp_features_list = ["featured snippet", "people also ask"]
+        
+        serp_features_str = ", ".join(serp_features_list)
+        
+        # Prepare People Also Asked questions - LIMIT to top 3
+        paa_str = ""
+        if paa_questions and isinstance(paa_questions, list):
+            for i, question in enumerate(paa_questions[:3], 1):
+                if question and isinstance(question, dict) and 'question' in question:
+                    paa_str += f"{i}. {question.get('question', '')}\n"
+        
+        # IMPROVED: Better format for primary and secondary terms with their recommended usage
+        # LIMIT to fewer terms to prevent overloading
+        primary_terms_with_usage = []
+        if term_data and 'primary_terms' in term_data:
+            for term_info in term_data.get('primary_terms', [])[:5]:  # LIMIT to top 5 primary terms
                 term = term_info.get('term', '')
                 importance = term_info.get('importance', 0)
                 usage = term_info.get('recommended_usage', 1)
-                primary_terms_text += f"- {term} (importance: {importance:.2f}, use ~{usage} times)\n"
+                if term:
+                    primary_terms_with_usage.append({
+                        'term': term,
+                        'importance': importance,
+                        'usage': usage
+                    })
         
-        # First, generate H1 guidance
-        h1_response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1000,
-            system="You are an expert SEO content strategist.",
-            messages=[
-                {"role": "user", "content": f"""
-                Create detailed writing guidance for an article about "{keyword}" with this H1:
-                
-                H1: {writer_guide['h1']['heading']}
-                
-                Provide:
-                1. Guidance on how to introduce this topic effectively
-                2. Why this H1 is strategically important (SEO perspective)
-                
-                {primary_terms_text}
-                
-                Format your response as JSON:
-                
-                {{
-                    "guidance": "Detailed guidance for introduction...",
-                    "why_it_matters": "Explanation of why this H1 is important..."
-                }}
-                """}
-            ],
-            temperature=0.5
-        )
+        # Format primary terms for better inclusion in the prompt
+        primary_terms_list = []
+        for term_info in primary_terms_with_usage:
+            primary_terms_list.append(f"{term_info['term']} (use {term_info['usage']} times)")
         
-        # Extract and parse JSON response for H1
-        h1_content = h1_response.content[0].text
-        h1_json_match = re.search(r'({.*})', h1_content, re.DOTALL)
-        if h1_json_match:
-            h1_data = json.loads(h1_json_match.group(1))
-            writer_guide['h1']['guidance'] = h1_data.get('guidance', '')
-            writer_guide['h1']['why_it_matters'] = h1_data.get('why_it_matters', '')
+        primary_terms_str = "\n".join([f"- {term}" for term in primary_terms_list])
         
-        # Then, generate guidance for each section and subsection
-        for section in semantic_structure.get('sections', []):
-            h2 = section.get('h2', '')
-            if not h2:
-                continue
-                
-            # Generate guidance for this H2 section
-            h2_response = client.messages.create(
+        # IMPROVED: Better format for secondary terms - LIMIT to fewer terms
+        secondary_terms_list = []
+        if term_data and 'secondary_terms' in term_data:
+            for term_info in term_data.get('secondary_terms', [])[:8]:  # LIMIT to top 8 secondary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                if term and importance > 0.5:
+                    secondary_terms_list.append(term)
+        
+        secondary_terms_str = "\n".join([f"- {term}" for term in secondary_terms_list])
+        
+        if guidance_only:
+            # Generate writing guidance for each section
+            response = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
-                max_tokens=1000,
-                system="You are an expert SEO content strategist.",
+                max_tokens=7000,
+                system="You are an expert SEO content strategist who provides detailed writing guidance.",
                 messages=[
                     {"role": "user", "content": f"""
-                    Create detailed writing guidance for this section of an article about "{keyword}":
+                    Create detailed writing guidance for an article about "{keyword}" following the semantic structure below.
                     
-                    H2: {h2}
+                    For each section (H1, H2s, and H3s), provide:
+                    1. The key points to cover
+                    2. Relevant statistics or data to mention (if applicable)
+                    3. Tone and approach recommendations
+                    4. Specific keywords to include
+                    5. Approximate word count target
                     
-                    Provide:
-                    1. Key points to cover in this section
-                    2. Approximate word count recommendation
-                    3. Specific keywords to include
-                    4. Why this section matters for this topic (SEO perspective)
+                    Use this semantic structure:
+                    H1: {h1}
                     
-                    {top_headings_text}
+                    Sections:
+                    {sections_str}
                     
-                    {primary_terms_text}
+                    Content context:
+                    - Main keyword: {keyword}
+                    - Related keywords to incorporate: {related_kw_str}
+                    - Optimize for these SERP features: {serp_features_str}
+                    - Questions to address: {paa_str}
                     
-                    Format your response as JSON:
+                    Important terms to include:
+                    Primary terms (use these multiple times):
+                    {primary_terms_str}
                     
-                    {{
-                        "guidance": "Detailed section guidance...",
-                        "word_count": 300,
-                        "key_terms": ["term1", "term2", "term3"],
-                        "why_it_matters": "Explanation of why this section is important..."
-                    }}
+                    Secondary terms (try to include these at least once):
+                    {secondary_terms_str}
+                    
+                    Format the guidance with proper HTML:
+                    - Main title in <h1> tags
+                    - Section headings in <h2> tags
+                    - Subsection headings in <h3> tags
+                    - Guidance points in <p> tags
+                    - Use <ul>, <li> for bullet points
+                    
+                    Aim for comprehensive guidance that will help a writer create a 1,200-1,500 word article.
                     """}
                 ],
                 temperature=0.5
             )
             
-            # Extract and parse JSON response for H2
-            h2_content = h2_response.content[0].text
-            h2_json_match = re.search(r'({.*})', h2_content, re.DOTALL)
-            
-            section_guide = {
-                'heading': h2,
-                'guidance': '',
-                'word_count': 300,
-                'key_terms': [],
-                'why_it_matters': '',
-                'subsections': []
-            }
-            
-            if h2_json_match:
-                h2_data = json.loads(h2_json_match.group(1))
-                section_guide['guidance'] = h2_data.get('guidance', '')
-                section_guide['word_count'] = h2_data.get('word_count', 300)
-                section_guide['key_terms'] = h2_data.get('key_terms', [])
-                section_guide['why_it_matters'] = h2_data.get('why_it_matters', '')
-            
-            # Process subsections
-            for subsection in section.get('subsections', []):
-                h3 = subsection.get('h3', '')
-                if not h3:
-                    continue
+            guidance_content = response.content[0].text
+            return guidance_content, True
+        else:
+            # COMPLETELY REVISED: Enhanced system prompt and writing instructions
+            response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=6000,
+                system="""You are an expert content writer who creates engaging, flowing articles with natural transitions and varied sentence structures.
+
+                Your writing principles:
+                1. Create smooth, logical transitions between sections and paragraphs
+                2. Vary sentence structures and section opening styles to maintain reader interest
+                3. Maintain a cohesive narrative throughout the article
+                4. Integrate SEO terms naturally and contextually within the text
+                5. Balance both structure and creative expression""",
+                
+                messages=[
+                    {"role": "user", "content": f"""
+                    Write an engaging, natural-flowing article about "{keyword}" covering ALL the sections outlined below.
                     
-                # Generate guidance for this H3 subsection
-                h3_response = client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=800,
-                    system="You are an expert SEO content strategist.",
-                    messages=[
-                        {"role": "user", "content": f"""
-                        Create writing guidance for this subsection under "{h2}" in an article about "{keyword}":
-                        
-                        H3: {h3}
-                        
-                        Provide:
-                        1. Key points to cover
-                        2. Approximate word count
-                        3. Why this subsection matters (SEO perspective)
-                        
-                        Format your response as JSON:
-                        
-                        {{
-                            "guidance": "Detailed subsection guidance...",
-                            "word_count": 150,
-                            "why_it_matters": "Explanation of why this subsection is important..."
-                        }}
-                        """}
-                    ],
-                    temperature=0.5
-                )
-                
-                # Extract and parse JSON response for H3
-                h3_content = h3_response.content[0].text
-                h3_json_match = re.search(r'({.*})', h3_content, re.DOTALL)
-                
-                subsection_guide = {
-                    'heading': h3,
-                    'guidance': '',
-                    'word_count': 150,
-                    'why_it_matters': ''
-                }
-                
-                if h3_json_match:
-                    h3_data = json.loads(h3_json_match.group(1))
-                    subsection_guide['guidance'] = h3_data.get('guidance', '')
-                    subsection_guide['word_count'] = h3_data.get('word_count', 150)
-                    subsection_guide['why_it_matters'] = h3_data.get('why_it_matters', '')
-                
-                section_guide['subsections'].append(subsection_guide)
+                    Use this semantic structure:
+                    H1: {h1}
+                    
+                    Sections to include (cover ALL sections listed):
+                    {sections_str}
+                    
+                    LENGTH REQUIREMENTS:
+                    1. TOTAL ARTICLE LENGTH: 1,200-1,500 words
+                    2. PARAGRAPH LENGTH: Each paragraph should be concise (2-3 sentences)
+                    
+                    CRITICAL WRITING STYLE REQUIREMENTS:
+                    1. DO NOT use the same introductory pattern for different sections
+                    2. Each section should have a unique opening approach and tone
+                    3. Create a cohesive narrative flow throughout the article
+                    4. Use varied transitional phrases between sections and paragraphs
+                    5. Avoid beginning consecutive paragraphs with similar structures
+                    
+                    Examples of varied section introductions:
+                    - Direct statement: "Understanding {keyword} requires..."
+                    - Scenario: "Imagine a situation where..."
+                    - Statistic: "Recent studies show that..."
+                    - Question-based: "What makes {keyword} so important? The answer lies in..."
+                    - Comparison: "Unlike similar approaches, {keyword}..."
+                    - Expert insight: "Industry experts emphasize that..."
+                    
+                    SEO REQUIREMENTS:
+                    Primary terms to include (with recommended usage):
+                    {primary_terms_str}
+                    
+                    Secondary terms to include (at least once each):
+                    {secondary_terms_str}
+                    
+                    Address these questions naturally within the content:
+                    {paa_str}
+                    
+                    OTHER CONTENT GUIDELINES:
+                    1. While maintaining SEO requirements, prioritize NATURAL LANGUAGE FLOW
+                    2. Create content that sounds like it was written by a single expert voice
+                    3. Include ALL listed sections but vary how you introduce and transition between them
+                    4. Use bullet points for lists rather than long paragraphs
+                    5. Avoid obvious keyword stuffing that disrupts reading flow
+                    
+                    Format the article with proper HTML:
+                    - Main title in <h1> tags
+                    - Section headings in <h2> tags
+                    - Subsection headings in <h3> tags
+                    - Sub-subsection headings in <h4> tags
+                    - Paragraphs in <p> tags
+                    - Use <ul>, <li> for bullet points and <ol>, <li> for numbered lists
+                    """}
+                ],
+                temperature=0.6  # Increased temperature for more creative, varied output
+            )
             
-            writer_guide['sections'].append(section_guide)
-        
-        return writer_guide, True
+            article_content = response.content[0].text
+            return article_content, True
     
     except Exception as e:
-        error_msg = f"Exception in generate_writer_guide: {str(e)}"
+        error_msg = f"Exception in generate_article: {str(e)}"
         logger.error(error_msg)
-        return {}, False
-
-def format_writer_guide_as_html(writer_guide: Dict) -> str:
-    """
-    Format writer guide data as HTML with section explanations
-    """
-    html = []
-    
-    # Add H1 section
-    h1_data = writer_guide.get('h1', {})
-    html.append(f"<h1>{h1_data.get('heading', 'Article Title')}</h1>")
-    
-    html.append("<div class='section-guide'>")
-    html.append("<h2>Introduction Guidance</h2>")
-    html.append(f"<p>{h1_data.get('guidance', '')}</p>")
-    
-    html.append("<h3>Why This Matters</h3>")
-    html.append(f"<p><em>{h1_data.get('why_it_matters', '')}</em></p>")
-    html.append("</div>")
-    
-    # Add each section
-    for section in writer_guide.get('sections', []):
-        html.append(f"<h2>{section.get('heading', '')}</h2>")
-        
-        html.append("<div class='section-guide'>")
-        html.append("<h3>Section Guidance</h3>")
-        html.append(f"<p>{section.get('guidance', '')}</p>")
-        
-        html.append("<h4>Key Details</h4>")
-        html.append("<ul>")
-        html.append(f"<li><strong>Word count:</strong> {section.get('word_count', 300)}</li>")
-        
-        # Add key terms if available
-        key_terms = section.get('key_terms', [])
-        if key_terms:
-            html.append(f"<li><strong>Key terms:</strong> {', '.join(key_terms)}</li>")
-            
-        html.append("</ul>")
-        
-        html.append("<h4>Why This Section Matters</h4>")
-        html.append(f"<p><em>{section.get('why_it_matters', '')}</em></p>")
-        html.append("</div>")
-        
-        # Add subsections
-        for subsection in section.get('subsections', []):
-            html.append(f"<h3>{subsection.get('heading', '')}</h3>")
-            
-            html.append("<div class='section-guide'>")
-            html.append("<h4>Subsection Guidance</h4>")
-            html.append(f"<p>{subsection.get('guidance', '')}</p>")
-            
-            html.append("<h5>Key Details</h5>")
-            html.append("<ul>")
-            html.append(f"<li><strong>Word count:</strong> {subsection.get('word_count', 150)}</li>")
-            html.append("</ul>")
-            
-            html.append("<h5>Why This Subsection Matters</h5>")
-            html.append(f"<p><em>{subsection.get('why_it_matters', '')}</em></p>")
-            html.append("</div>")
-    
-    return "\n".join(html)
+        return "", False
 
 ###############################################################################
-# 9. Main Analysis Function
+# 9. Internal Linking
 ###############################################################################
 
-def analyse(keyword: str, serp_results: List[Dict], openai_api_key: str, anthropic_api_key: str, 
-            firecrawl_api_key: str, max_results: int = 20) -> Tuple[Dict, bool]:
+def parse_site_pages_spreadsheet(uploaded_file) -> Tuple[List[Dict], bool]:
     """
-    Enhanced content analysis with 20-result scrape, clustering, and heading frequency weight
-    Returns: analysis_data, success_status
+    Parse uploaded CSV/Excel with site pages
+    Returns: pages, success_status
     """
     try:
-        # Limit to top 20 results
-        top_results = serp_results[:max_results]
+        # Determine file type and read accordingly
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            logger.error(f"Unsupported file type: {uploaded_file.name}")
+            return [], False
         
-        # Scrape competitor content using FireCrawl
-        competitor_contents = []
-        for result in top_results:
-            url = result.get('url', '')
-            if not url:
+        # Check required columns
+        required_columns = ['URL', 'Title', 'Meta Description']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            logger.error(f"Missing required columns: {', '.join(missing_columns)}")
+            return [], False
+        
+        # Convert dataframe to list of dicts
+        pages = []
+        for _, row in df.iterrows():
+            pages.append({
+                'url': row['URL'],
+                'title': row['Title'],
+                'description': row['Meta Description']
+            })
+        
+        return pages, True
+    
+    except Exception as e:
+        error_msg = f"Exception in parse_site_pages_spreadsheet: {str(e)}"
+        logger.error(error_msg)
+        return [], False
+
+def embed_site_pages(pages: List[Dict], openai_api_key: str, batch_size: int = 10) -> Tuple[List[Dict], bool]:
+    """
+    Generate embeddings for site pages in batches for faster processing
+    Returns: pages_with_embeddings, success_status
+    """
+    try:
+        openai.api_key = openai_api_key
+        
+        # Prepare texts to embed
+        texts = []
+        for page in pages:
+            # Combine URL, title and description for embedding
+            combined_text = f"{page['url']} {page['title']} {page['description']}"
+            texts.append(combined_text)
+        
+        # Process in batches
+        embeddings = []
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        
+        for i in range(total_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, len(texts))
+            
+            batch_texts = texts[start_idx:end_idx]
+            
+            response = openai.Embedding.create(
+                model="text-embedding-3-large",
+                input=batch_texts
+            )
+            
+            batch_embeddings = [item['embedding'] for item in response['data']]
+            embeddings.extend(batch_embeddings)
+        
+        # Add embeddings to pages
+        pages_with_embeddings = []
+        for i, page in enumerate(pages):
+            page_with_embedding = page.copy()
+            page_with_embedding['embedding'] = embeddings[i]
+            pages_with_embeddings.append(page_with_embedding)
+        
+        return pages_with_embeddings, True
+    
+    except Exception as e:
+        error_msg = f"Exception in embed_site_pages: {str(e)}"
+        logger.error(error_msg)
+        return pages, False
+
+def verify_semantic_match(anchor_text: str, page_title: str) -> float:
+    """
+    Verify and score the semantic match between anchor text and page title
+    Returns a similarity score (0-1)
+    """
+    # Define common stop words
+    stop_words = {'a', 'an', 'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 
+                  'by', 'about', 'as', 'is', 'are', 'was', 'were', 'of', 'from', 'into', 'during',
+                  'after', 'before', 'above', 'below', 'between', 'under', 'over', 'through'}
+    
+    # Convert to lowercase and tokenize
+    anchor_words = {word.lower() for word in re.findall(r'\b\w+\b', anchor_text)}
+    title_words = {word.lower() for word in re.findall(r'\b\w+\b', page_title)}
+    
+    # Remove stop words
+    anchor_meaningful = anchor_words - stop_words
+    title_meaningful = title_words - stop_words
+    
+    if not anchor_meaningful or not title_meaningful:
+        return 0.0
+    
+    # Find overlapping words
+    overlaps = anchor_meaningful.intersection(title_meaningful)
+    
+    # Calculate similarity score based on overlap percentage
+    # (weighted toward the anchor text's coverage of title words)
+    if len(overlaps) == 0:
+        return 0.0
+    
+    # Calculate percentage of title words covered by anchor text
+    title_coverage = len(overlaps) / len(title_meaningful)
+    
+    # Calculate percentage of anchor text words that appear in title
+    anchor_precision = len(overlaps) / len(anchor_meaningful)
+    
+    # Combined score (weighted toward title coverage)
+    similarity = (title_coverage * 0.7) + (anchor_precision * 0.3)
+    
+    return similarity
+
+def generate_internal_links_with_embeddings(article_content: str, pages_with_embeddings: List[Dict], 
+                                           openai_api_key: str, anthropic_api_key: str, word_count: int) -> Tuple[str, List[Dict], bool]:
+    """
+    Generate internal links using paragraph-level semantic matching with embeddings
+    Returns: article_with_links, links_added, success_status
+    """
+    try:
+        # Using the OpenAI API key
+        openai.api_key = openai_api_key
+        
+        # Calculate max links based on word count
+        max_links = min(10, max(2, int(word_count / 1000) * 8))  # Ensure at least 2 links
+        
+        # Log for debugging
+        logger.info(f"Generating up to {max_links} internal links for content with {word_count} words")
+        
+        # 1. Extract paragraphs from the article
+        soup = BeautifulSoup(article_content, 'html.parser')
+        paragraphs = []
+        
+        # Find all paragraph tags
+        p_tags = soup.find_all('p')
+        
+        # If no p tags found, try to split content by double newlines
+        if not p_tags and not '<p>' in article_content:
+            # This might be plain text content
+            text_chunks = article_content.split('\n\n')
+            for i, chunk in enumerate(text_chunks):
+                if len(chunk.split()) > 15:  # Only consider chunks with enough content
+                    paragraphs.append({
+                        'text': chunk,
+                        'html': f"<p>{chunk}</p>",
+                        'element': f"chunk_{i}"  # Just a placeholder
+                    })
+            
+            if not paragraphs:
+                # Try splitting by single newlines
+                text_chunks = article_content.split('\n')
+                for i, chunk in enumerate(text_chunks):
+                    if len(chunk.split()) > 15:
+                        paragraphs.append({
+                            'text': chunk,
+                            'html': f"<p>{chunk}</p>",
+                            'element': f"chunk_{i}"
+                        })
+        else:
+            # Process the p tags
+            for p_tag in p_tags:
+                para_text = p_tag.get_text()
+                if len(para_text.split()) > 15:  # Only consider paragraphs with enough content
+                    paragraphs.append({
+                        'text': para_text,
+                        'html': str(p_tag),
+                        'element': p_tag
+                    })
+        
+        if not paragraphs:
+            logger.warning("No paragraphs found in the article")
+            # Final fallback - treat the entire content as one paragraph if it has no HTML
+            if '<' not in article_content and '>' not in article_content:
+                paragraphs.append({
+                    'text': article_content,
+                    'html': f"<p>{article_content}</p>",
+                    'element': "full_content"
+                })
+            else:
+                return article_content, [], False
+        
+        # 2. Generate embeddings for each paragraph - use same model as pages
+        logger.info(f"Generating embeddings for {len(paragraphs)} paragraphs")
+        paragraph_texts = [p['text'] for p in paragraphs]
+        
+        try:
+            # IMPORTANT: Check dimensions of the first page embedding to determine model
+            first_page = next((p for p in pages_with_embeddings if p.get('embedding')), None)
+            
+            if not first_page:
+                logger.error("No valid page embeddings found")
+                return article_content, [], False
+            
+            embed_dim = len(first_page['embedding'])
+            logger.info(f"Detected page embedding dimension: {embed_dim}")
+            
+            # Choose the appropriate model based on dimension
+            if embed_dim == 3072:
+                embedding_model = "text-embedding-3-large"  # 3072 dimensions
+            else:
+                embedding_model = "text-embedding-3-small"  # 1536 dimensions
+            
+            logger.info(f"Using embedding model: {embedding_model}")
+            
+            # Get paragraph embeddings using the same model as pages
+            response = openai.Embedding.create(
+                model=embedding_model,
+                input=paragraph_texts
+            )
+            paragraph_embeddings = [item['embedding'] for item in response['data']]
+            
+            # Add embeddings to paragraphs
+            for i, embedding in enumerate(paragraph_embeddings):
+                paragraphs[i]['embedding'] = embedding
+                
+        except Exception as e:
+            logger.error(f"Error generating paragraph embeddings: {e}")
+            return article_content, [], False
+        
+        # 3. Find the best page match for each paragraph
+        links_to_add = []
+        used_paragraphs = set()  # Track paragraphs that already have links
+        used_pages = set()       # Track pages that are already linked to
+        
+        # Only process pages that have embeddings
+        valid_pages = [p for p in pages_with_embeddings if p.get('embedding')]
+        
+        # For each paragraph, find the best matching page
+        for para_idx, paragraph in enumerate(paragraphs):
+            if len(links_to_add) >= max_links or para_idx in used_paragraphs:
                 continue
                 
-            # Scrape content
-            content, content_success = scrape_webpage(url, firecrawl_api_key)
-            
-            if content_success and content:
-                # Extract headings
-                headings = extract_headings(url, firecrawl_api_key)
+            para_embedding = paragraph.get('embedding', [])
+            if not para_embedding:
+                continue
                 
-                competitor_contents.append({
-                    'url': url,
-                    'title': result.get('title', ''),
-                    'content': content,
-                    'headings': headings,
-                    'rank': result.get('rank_group', 0),
-                    'page_type': result.get('page_type', '')
-                })
+            # Find best matching page for this paragraph
+            best_score = 0.65  # Minimum threshold for a good match
+            best_page = None
+            
+            for page in valid_pages:
+                if page['url'] in used_pages:
+                    continue
+                    
+                page_embedding = page.get('embedding', [])
+                if not page_embedding:
+                    continue
+                
+                # ADDED: Verify dimensions match
+                if len(para_embedding) != len(page_embedding):
+                    logger.error(f"Embedding dimension mismatch: paragraph {len(para_embedding)}, page {len(page_embedding)}")
+                    continue
+                
+                # Calculate cosine similarity
+                similarity = np.dot(para_embedding, page_embedding) / (
+                    np.linalg.norm(para_embedding) * np.linalg.norm(page_embedding)
+                )
+                
+                if similarity > best_score:
+                    best_score = similarity
+                    best_page = page
+            
+            # If we found a good page match
+            if best_page:
+                page_title = best_page.get('title', '')
+                para_text = paragraph['text']
+                
+                # Using simple keyword matching instead of Claude for anchor text selection
+                # This avoids API key issues entirely
+                try:
+                    # Extract keywords from page title
+                    title_words = set(re.findall(r'\b\w{4,}\b', page_title.lower()))
+                    
+                    # Find best anchor text by matching title keywords in paragraph
+                    anchor_text = ""
+                    best_word_count = 0
+                    
+                    # Look for 2-6 word phrases that contain title keywords
+                    words = para_text.split()
+                    for i in range(len(words)):
+                        for j in range(i+1, min(i+7, len(words)+1)):
+                            phrase = " ".join(words[i:j])
+                            if 2 <= len(phrase.split()) <= 6:
+                                phrase_words = set(re.findall(r'\b\w{4,}\b', phrase.lower()))
+                                matching_words = phrase_words.intersection(title_words)
+                                
+                                if matching_words and len(matching_words) > best_word_count:
+                                    anchor_text = phrase
+                                    best_word_count = len(matching_words)
+                    
+                    # If no good match found but we need an anchor text
+                    if not anchor_text and title_words:
+                        # Find any substantial words from title in paragraph
+                        for title_word in sorted(title_words, key=len, reverse=True):
+                            if len(title_word) >= 5:  # Only use substantial words
+                                pattern = re.compile(r'\b' + title_word + r'\b', re.IGNORECASE)
+                                match = pattern.search(para_text)
+                                if match:
+                                    # Get 1-2 words before and after the match
+                                    start = max(0, match.start() - 20)
+                                    end = min(len(para_text), match.end() + 20)
+                                    context = para_text[start:end]
+                                    words = context.split()
+                                    if len(words) >= 3:
+                                        anchor_text = " ".join(words[:3])
+                                        break
+                    
+                    # Verify the anchor text exists in the paragraph
+                    if anchor_text and anchor_text in para_text:
+                        # Add to our links list
+                        links_to_add.append({
+                            'url': best_page['url'],
+                            'anchor_text': anchor_text,
+                            'paragraph_index': para_idx,
+                            'similarity_score': best_score,
+                            'page_title': page_title
+                        })
+                        
+                        # Mark as used
+                        used_paragraphs.add(para_idx)
+                        used_pages.add(best_page['url'])
+                        
+                        logger.info(f"Found match: '{anchor_text}' in paragraph {para_idx} for page '{page_title}'")
+                except Exception as e:
+                    logger.error(f"Error identifying anchor text: {e}")
         
-        if not competitor_contents:
-            logging.error("Failed to scrape any competitor content")
-            return {}, False
+        # 4. Apply the links to the article
+        if not links_to_add:
+            logger.warning("No suitable links found to add")
+            return article_content, [], False
         
-        # Cluster competitors using OpenAI embeddings and FAISS K-means
-        clustered_competitors, cluster_success = _cluster_competitors(
-            competitor_contents, openai_api_key, num_clusters=5
-        )
+        # Create a deep copy of the soup to modify
+        modified_soup = BeautifulSoup(article_content, 'html.parser')
+        modified_paragraphs = modified_soup.find_all('p')
         
-        # Build lexical corpus from competitor content
-        corpus = build_lexical_corpus(clustered_competitors)
+        # Apply links
+        for link in links_to_add:
+            para_idx = link['paragraph_index']
+            if para_idx < len(modified_paragraphs):
+                p_tag = modified_paragraphs[para_idx]
+                anchor_text = link['anchor_text']
+                url = link['url']
+                
+                # Replace the text with a linked version
+                new_html = p_tag.decode_contents().replace(
+                    anchor_text, 
+                    f'<a href="{url}">{anchor_text}</a>', 
+                    1
+                )
+                p_tag.clear()
+                p_tag.append(BeautifulSoup(new_html, 'html.parser'))
+                
+                # Add context to the link info
+                para_text = paragraphs[para_idx]['text']
+                start_pos = max(0, para_text.find(anchor_text) - 30)
+                end_pos = min(len(para_text), para_text.find(anchor_text) + len(anchor_text) + 30)
+                context = "..." + para_text[start_pos:end_pos].replace(anchor_text, f"[{anchor_text}]") + "..."
+                
+                # Update the link details
+                link['context'] = context
         
-        # Extract important terms using Claude
-        term_data, term_success = extract_important_terms(
-            clustered_competitors, anthropic_api_key
-        )
+        # Format for return
+        links_output = []
+        for link in links_to_add:
+            links_output.append({
+                "url": link['url'],
+                "anchor_text": link['anchor_text'],
+                "context": link.get('context', ''),
+                "page_title": link['page_title'],
+                "similarity_score": round(link['similarity_score'], 2)
+            })
         
-        if not term_success:
-            logging.error("Failed to extract important terms")
-            return {}, False
-        
-        # Analyze semantic structure
-        semantic_structure, structure_success = analyze_semantic_structure(
-            clustered_competitors, anthropic_api_key
-        )
-        
-        if not structure_success:
-            logging.error("Failed to analyze semantic structure")
-            return {}, False
-        
-        # Generate writer guide with section explanations
-        writer_guide, guide_success = generate_writer_guide(
-            keyword, semantic_structure, corpus, term_data, anthropic_api_key
-        )
-        
-        # Compile analysis data
-        analysis_data = {
-            'keyword': keyword,
-            'competitor_contents': clustered_competitors,
-            'semantic_structure': semantic_structure,
-            'term_data': term_data,
-            'corpus': corpus,
-            'heading_counts': corpus['heading_counts'],
-            'writer_guide': writer_guide
-        }
-        
-        return analysis_data, True
+        return str(modified_soup), links_output, True
         
     except Exception as e:
-        error_msg = f"Exception in analyse: {str(e)}"
-        logging.error(error_msg)
-        return {}, False
-
+        error_msg = f"Exception in generate_internal_links_with_embeddings: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return article_content, [], False
+              
 ###############################################################################
-# 10. Enhanced Article Generation with Linting
-###############################################################################
-
-def generate_article_with_linter(keyword: str, semantic_structure: Dict, writer_guide: Dict,
-                              term_data: Dict, corpus: Dict, anthropic_api_key: str, 
-                              guidance_only: bool = False) -> Tuple[str, Dict, bool]:
-    """
-    Generate comprehensive article with natural language flow and balanced keyword usage.
-    Includes automatic linting after generation.
-    Returns: article_content, lint_results, success_status
-    """
-    try:
-        if guidance_only:
-            # Generate writing guidance
-            guidance_content = format_writer_guide_as_html(writer_guide)
-            return guidance_content, {}, True
-        
-        # Generate the actual article content
-        article_content, article_success = generate_article(
-            keyword, semantic_structure, [], [], [], term_data, anthropic_api_key, guidance_only=False
-        )
-        
-        if not article_success or not article_content:
-            return "", {}, False
-        
-        # Run the linter on the generated content
-        lint_results = lint_article(article_content, keyword, term_data)
-        
-        return article_content, lint_results, True
-        
-    except Exception as e:
-        error_msg = f"Exception in generate_article_with_linter: {str(e)}"
-        logging.error(error_msg)
-        return "", {}, False
-
-###############################################################################
-# 11. Updated Word Document with Lint Results
+# 10. Document Generation
 ###############################################################################
 
 def create_word_document(keyword: str, serp_results: List[Dict], related_keywords: List[Dict],
                         semantic_structure: Dict, article_content: str, meta_title: str, 
                         meta_description: str, paa_questions: List[Dict], term_data: Dict = None,
                         score_data: Dict = None, internal_links: List[Dict] = None, 
-                        guidance_only: bool = False, lint_results: Dict = None) -> Tuple[BytesIO, bool]:
+                        guidance_only: bool = False) -> Tuple[BytesIO, bool]:
     """
-    Create Word document with all components including content score and lint results
+    Create Word document with all components including content score if available
     Returns: document_stream, success_status
     """
     try:
@@ -1435,7 +2016,7 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         header_cells[3].text = 'Page Type'
         
         # Add data rows
-        for result in serp_results[:10]:  # Just show top 10 in document
+        for result in serp_results:
             row_cells = table.add_row().cells
             row_cells[0].text = str(result.get('rank_group', ''))
             row_cells[1].text = result.get('title', '')
@@ -1546,155 +2127,6 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
                 component_name = component.replace('_score', '').replace('_', ' ').title()
                 component_para.add_run(f"{component_name}: ").bold = True
                 component_para.add_run(f"{value}")
-        
-        # Add Lint Results section if available
-        if lint_results:
-            doc.add_heading('Content Quality Analysis', level=1)
-            
-            # 1. Readability
-            readability = lint_results.get('readability', {})
-            doc.add_heading('Readability', level=2)
-            
-            read_para = doc.add_paragraph()
-            read_para.add_run("Score: ").bold = True
-            score = readability.get('score', 0)
-            
-            # Color based on score
-            score_text = f"{score:.1f} ({readability.get('grade_level', '')})"
-            score_run = read_para.add_run(score_text)
-            
-            if score >= 60:
-                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
-            elif score < 30:
-                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            else:
-                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            
-            # Add readability issues
-            readability_issues = readability.get('issues', [])
-            if readability_issues:
-                doc.add_heading('Readability Issues', level=3)
-                for issue in readability_issues:
-                    issue_para = doc.add_paragraph(issue, style='List Bullet')
-            
-            # 2. Keyword Density
-            keyword_density = lint_results.get('keyword_density', {})
-            doc.add_heading('Keyword Usage', level=2)
-            
-            # Primary keyword table
-            primary_table = doc.add_table(rows=1, cols=4)
-            primary_table.style = 'Table Grid'
-            
-            header_cells = primary_table.rows[0].cells
-            header_cells[0].text = 'Term'
-            header_cells[1].text = 'Count'
-            header_cells[2].text = 'Density'
-            header_cells[3].text = 'Status'
-            
-            primary_kw = keyword_density.get('primary_keyword', {})
-            row_cells = primary_table.add_row().cells
-            row_cells[0].text = primary_kw.get('term', keyword)
-            row_cells[1].text = str(primary_kw.get('count', 0))
-            row_cells[2].text = f"{primary_kw.get('density', 0):.2f}%"
-            
-            status_cell = row_cells[3]
-            status_text = primary_kw.get('status', 'unknown')
-            status_cell.text = status_text
-            
-            # Add color based on status
-            for paragraph in status_cell.paragraphs:
-                for run in paragraph.runs:
-                    if status_text == 'good':
-                        run.font.color.rgb = RGBColor(0, 128, 0)  # Green
-                    elif status_text == 'missing':
-                        run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                    else:
-                        run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            
-            # Primary terms table
-            if keyword_density.get('primary_terms'):
-                doc.add_heading('Primary Terms Usage', level=3)
-                
-                terms_table = doc.add_table(rows=1, cols=5)
-                terms_table.style = 'Table Grid'
-                
-                header_cells = terms_table.rows[0].cells
-                header_cells[0].text = 'Term'
-                header_cells[1].text = 'Count'
-                header_cells[2].text = 'Density'
-                header_cells[3].text = 'Recommended'
-                header_cells[4].text = 'Status'
-                
-                for term_info in keyword_density.get('primary_terms', []):
-                    row_cells = terms_table.add_row().cells
-                    row_cells[0].text = term_info.get('term', '')
-                    row_cells[1].text = str(term_info.get('count', 0))
-                    row_cells[2].text = f"{term_info.get('density', 0):.2f}%"
-                    row_cells[3].text = str(term_info.get('recommended', 1))
-                    
-                    status_cell = row_cells[4]
-                    status_text = term_info.get('status', 'unknown')
-                    status_cell.text = status_text
-                    
-                    # Add color based on status
-                    for paragraph in status_cell.paragraphs:
-                        for run in paragraph.runs:
-                            if status_text == 'good':
-                                run.font.color.rgb = RGBColor(0, 128, 0)  # Green
-                            elif status_text == 'missing':
-                                run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-                            else:
-                                run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            
-            # Keyword density issues
-            kw_issues = keyword_density.get('issues', [])
-            if kw_issues:
-                doc.add_heading('Keyword Usage Issues', level=3)
-                for issue in kw_issues:
-                    issue_para = doc.add_paragraph(issue, style='List Bullet')
-            
-            # 3. Sentence Variety
-            sentence_variety = lint_results.get('sentence_variety', {})
-            doc.add_heading('Sentence Variety', level=2)
-            
-            sv_para = doc.add_paragraph()
-            sv_para.add_run("Variety Score: ").bold = True
-            variety_score = sentence_variety.get('score', 0)
-            
-            # Color based on score
-            score_text = f"{variety_score:.1f}%"
-            score_run = sv_para.add_run(score_text)
-            
-            if variety_score >= 80:
-                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
-            elif variety_score < 50:
-                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
-            else:
-                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
-            
-            # Add sentence variety issues
-            sv_issues = sentence_variety.get('issues', [])
-            if sv_issues:
-                doc.add_heading('Sentence Structure Issues', level=3)
-                for issue in sv_issues:
-                    issue_para = doc.add_paragraph(issue, style='List Bullet')
-            
-            # Add repeating patterns if found
-            repeat_patterns = sentence_variety.get('repeat_patterns', [])
-            if repeat_patterns:
-                doc.add_heading('Repeating Sentence Patterns', level=3)
-                
-                patterns_table = doc.add_table(rows=1, cols=2)
-                patterns_table.style = 'Table Grid'
-                
-                header_cells = patterns_table.rows[0].cells
-                header_cells[0].text = 'Pattern'
-                header_cells[1].text = 'Count'
-                
-                for pattern, count in repeat_patterns:
-                    row_cells = patterns_table.add_row().cells
-                    row_cells[0].text = f"{pattern}..."
-                    row_cells[1].text = str(count)
         
         # Section 5: Semantic Structure
         doc.add_heading('Recommended Content Structure', level=1)
@@ -1962,6 +2394,1406 @@ def create_word_document(keyword: str, serp_results: List[Dict], related_keyword
         return BytesIO(), False
 
 ###############################################################################
+# 11. Content Update Functions
+###############################################################################
+
+def parse_word_document(uploaded_file) -> Tuple[Dict, bool]:
+    """
+    Parse uploaded Word document to extract content structure
+    Returns: document_content, success_status
+    """
+    try:
+        # Read the document
+        doc = Document(BytesIO(uploaded_file.getvalue()))
+        
+        # Extract content structure
+        document_content = {
+            'title': '',
+            'headings': [],
+            'paragraphs': [],
+            'full_text': ''
+        }
+        
+        # Extract text and maintain hierarchy
+        full_text = []
+        current_heading = None
+        
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+                
+            # Check if it's a heading
+            if para.style.name.startswith('Heading'):
+                heading_level = int(para.style.name.replace('Heading', '')) if para.style.name != 'Heading' else 1
+                current_heading = {
+                    'text': text,
+                    'level': heading_level,
+                    'paragraphs': []
+                }
+                document_content['headings'].append(current_heading)
+                
+                # If it's the title (first heading), save it
+                if heading_level == 1 and not document_content['title']:
+                    document_content['title'] = text
+            else:
+                # It's a paragraph
+                para_obj = {
+                    'text': text,
+                    'heading': current_heading['text'] if current_heading else None
+                }
+                document_content['paragraphs'].append(para_obj)
+                
+                # Add to current heading if available
+                if current_heading:
+                    current_heading['paragraphs'].append(text)
+                
+            full_text.append(text)
+        
+        document_content['full_text'] = '\n\n'.join(full_text)
+        
+        return document_content, True
+    except Exception as e:
+        error_msg = f"Exception in parse_word_document: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return {}, False
+
+def analyze_content_gaps(existing_content: Dict, competitor_contents: List[Dict], semantic_structure: Dict, 
+                        term_data: Dict, score_data: Dict, anthropic_api_key: str, 
+                        keyword: str, paa_questions: List[Dict] = None) -> Tuple[Dict, bool]:
+    """
+    Enhanced content gap analysis that incorporates content scoring data
+    Returns: content_gaps, success_status
+    """
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Extract existing headings
+        existing_headings = [h['text'] for h in existing_content.get('headings', [])]
+        
+        # Extract recommended headings from semantic structure
+        recommended_headings = []
+        if 'h1' in semantic_structure:
+            recommended_headings.append(semantic_structure['h1'])
+        
+        for section in semantic_structure.get('sections', []):
+            if 'h2' in section:
+                recommended_headings.append(section['h2'])
+                for subsection in section.get('subsections', []):
+                    if 'h3' in subsection:
+                        recommended_headings.append(subsection['h3'])
+        
+        # Combine competitor content
+        competitor_text = ""
+        for content in competitor_contents:
+            competitor_text += content.get('content', '') + "\n\n"
+        
+        # Truncate if too long
+        if len(competitor_text) > 12000:
+            competitor_text = competitor_text[:12000]
+            
+        # Prepare PAA questions for the prompt
+        paa_text = ""
+        if paa_questions:
+            paa_text = "People Also Asked Questions:\n"
+            for i, q in enumerate(paa_questions, 1):
+                paa_text += f"{i}. {q.get('question', '')}\n"
+        
+        # Prepare content scoring data
+        content_score_text = ""
+        if score_data:
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            content_score_text = f"Content Score: {overall_score} ({grade})\n\n"
+            
+            # Add component scores
+            components = score_data.get('components', {})
+            content_score_text += "Component Scores:\n"
+            for component, score in components.items():
+                component_name = component.replace('_score', '').replace('_', ' ').title()
+                content_score_text += f"- {component_name}: {score}\n"
+            
+            # Add missing terms
+            if 'details' in score_data:
+                details = score_data.get('details', {})
+                
+                # Missing primary terms
+                primary_term_counts = details.get('primary_term_counts', {})
+                missing_primary = []
+                underused_primary = []
+                
+                if term_data and 'primary_terms' in term_data:
+                    for term_info in term_data.get('primary_terms', []):
+                        term = term_info.get('term', '')
+                        recommended = term_info.get('recommended_usage', 1)
+                        
+                        if term in primary_term_counts:
+                            actual = primary_term_counts[term].get('count', 0)
+                            if actual == 0:
+                                missing_primary.append(term)
+                            elif actual < recommended:
+                                underused_primary.append(f"{term} (used {actual}/{recommended} times)")
+                        else:
+                            missing_primary.append(term)
+                
+                if missing_primary:
+                    content_score_text += "\nMissing Primary Terms:\n"
+                    for term in missing_primary:
+                        content_score_text += f"- {term}\n"
+                
+                if underused_primary:
+                    content_score_text += "\nUnderused Primary Terms:\n"
+                    for term in underused_primary:
+                        content_score_text += f"- {term}\n"
+                
+                # Unanswered questions from scoring
+                question_coverage = details.get('question_coverage', {})
+                unanswered = []
+                
+                for question, info in question_coverage.items():
+                    if not info.get('answered', False):
+                        unanswered.append(question)
+                
+                if unanswered:
+                    content_score_text += "\nUnanswered Questions from Content Scoring:\n"
+                    for q in unanswered:
+                        content_score_text += f"- {q}\n"
+        
+        # Prepare term data
+        term_data_text = ""
+        if term_data:
+            # Primary terms
+            if 'primary_terms' in term_data:
+                term_data_text += "Primary Terms (Top 10):\n"
+                for term_info in term_data.get('primary_terms', [])[:10]:
+                    term = term_info.get('term', '')
+                    importance = term_info.get('importance', 0)
+                    usage = term_info.get('recommended_usage', 1)
+                    term_data_text += f"- {term} (importance: {importance:.2f}, usage: {usage})\n"
+            
+            # Topics to cover
+            if 'topics' in term_data:
+                term_data_text += "\nKey Topics to Cover:\n"
+                for topic_info in term_data.get('topics', []):
+                    topic = topic_info.get('topic', '')
+                    description = topic_info.get('description', '')
+                    term_data_text += f"- {topic}: {description}\n"
+        
+        # Use Claude to analyze content gaps
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=2500,
+            system="You are an expert SEO content analyst. Return your analysis in VALID JSON format following the provided template exactly.",
+            messages=[
+                {"role": "user", "content": f"""
+                Analyze the existing content and compare it with top-performing competitor content to identify gaps for the keyword: {keyword}
+                
+                Existing Content Headings:
+                {json.dumps(existing_headings, indent=2)}
+                
+                Recommended Content Structure Based on Competitors:
+                {json.dumps(recommended_headings, indent=2)}
+                
+                {content_score_text}
+                
+                {term_data_text}
+                
+                {paa_text}
+                
+                Existing Content:
+                {existing_content.get('full_text', '')[:5000]}
+                
+                Competitor Content (Sample):
+                {competitor_text[:5000]}
+                
+                Identify:
+                1. Missing headings/sections that should be added
+                2. Existing headings that should be revised/renamed
+                3. Key topics/points covered by competitors but missing in the existing content
+                4. Content areas that need expansion
+                5. SEMANTIC RELEVANCY ISSUES: Analyze if the content is too broadly focused instead of targeting the specific keyword "{keyword}". Identify sections that need to be refocused.
+                6. TERM USAGE ISSUES: Identify where important terms are missing or underused.
+                7. UNANSWERED QUESTIONS: If provided, analyze which "People Also Asked" questions are not adequately addressed in the content and should be incorporated.
+                
+                RETURN YOUR ANALYSIS USING EXACTLY THIS STRUCTURE:
+                
+                ```json
+                {{
+                    "missing_headings": [
+                        {{ 
+                            "heading": "Example Heading Text", 
+                            "level": 2, 
+                            "suggested_content": "Brief description of what this section should cover",
+                            "insert_after": "Example Existing Heading"
+                        }}
+                    ],
+                    "revised_headings": [
+                        {{ "original": "Original Heading", "suggested": "Improved Heading", "reason": "Reason for change" }}
+                    ],
+                    "content_gaps": [
+                        {{ "topic": "Topic Name", "details": "What's missing about this topic", "suggested_content": "Suggested content to add" }}
+                    ],
+                    "expansion_areas": [
+                        {{ "section": "Section Name", "reason": "Why this needs expansion", "suggested_content": "Additional content to include" }}
+                    ],
+                    "semantic_relevancy_issues": [
+                        {{ 
+                            "section": "Section that's off-target", 
+                            "issue": "Description of how the content is too broad or off-target", 
+                            "recommendation": "How to refocus the content on the keyword '{keyword}'"
+                        }}
+                    ],
+                    "term_usage_issues": [
+                        {{
+                            "term": "Missing or underused term",
+                            "section": "Section where it should be added",
+                            "suggestion": "How to naturally incorporate this term"
+                        }}
+                    ],
+                    "unanswered_questions": [
+                        {{
+                            "question": "People Also Asked question that isn't addressed",
+                            "insert_into_section": "Section where answer should be added",
+                            "suggested_answer": "Brief answer to include in the content"
+                        }}
+                    ]
+                }}
+                ```
+                
+                MAKE SURE your JSON is valid. Do not include any trailing commas after the last element in arrays. Do not include any text outside the JSON structure.
+                """}
+            ],
+            temperature=0.0  # Use temperature 0 for most consistent output
+        )
+        
+        # Extract content
+        content = response.content[0].text
+        
+        # Extract JSON from the response (between triple backticks if present)
+        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(1)
+        else:
+            # Try to find just JSON without the backticks
+            json_match = re.search(r'(\{\s*"missing_headings".*\})', content, re.DOTALL)
+            if json_match:
+                content = json_match.group(1)
+        
+        logger.info(f"Extracted JSON content: {content[:500]}...")
+        
+        # Custom JSON repair function
+        def repair_json(json_str):
+            # Remove trailing commas in lists
+            json_str = re.sub(r',(\s*[\]}])', r'\1', json_str)
+            
+            # Remove unmatched/dangling commas
+            json_str = re.sub(r',\s*$', '', json_str)
+            
+            # Ensure proper array formatting
+            json_str = re.sub(r'}\s*{', '},{', json_str)
+            
+            # Ensure proper property name formatting
+            json_str = re.sub(r'([{,])\s*([^"{\s][^:]*?):', r'\1"\2":', json_str)
+            
+            # Fix quotes around property values
+            json_str = re.sub(r':\s*([^",{\[\]\d\s][^,}\]]*?)([,}\]])', r':"\1"\2', json_str)
+            
+            return json_str
+        
+        # Try multiple approaches to parse the JSON
+        try:
+            # First attempt - direct parsing
+            content_gaps = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Initial JSON parse failed: {e}")
+            try:
+                # Second attempt - basic repair
+                fixed_content = repair_json(content)
+                content_gaps = json.loads(fixed_content)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Basic repair failed: {e}")
+                try:
+                    # Third attempt - create minimally valid JSON with key sections
+                    # Create a structured template
+                    template = {
+                        "missing_headings": [],
+                        "revised_headings": [],
+                        "content_gaps": [],
+                        "expansion_areas": [],
+                        "semantic_relevancy_issues": [],
+                        "term_usage_issues": [],
+                        "unanswered_questions": []
+                    }
+                    
+                    # Extract data section by section
+                    sections = [
+                        (r'"missing_headings"\s*:\s*\[(.*?)\]', "missing_headings"),
+                        (r'"revised_headings"\s*:\s*\[(.*?)\]', "revised_headings"),
+                        (r'"content_gaps"\s*:\s*\[(.*?)\]', "content_gaps"),
+                        (r'"expansion_areas"\s*:\s*\[(.*?)\]', "expansion_areas"),
+                        (r'"semantic_relevancy_issues"\s*:\s*\[(.*?)\]', "semantic_relevancy_issues"),
+                        (r'"term_usage_issues"\s*:\s*\[(.*?)\]', "term_usage_issues"),
+                        (r'"unanswered_questions"\s*:\s*\[(.*?)\]', "unanswered_questions")
+                    ]
+                    
+                    # Try to parse each section individually
+                    for pattern, key in sections:
+                        match = re.search(pattern, content, re.DOTALL)
+                        if match:
+                            section_content = match.group(1).strip()
+                            if section_content:
+                                try:
+                                    # Add brackets and try to parse
+                                    items = json.loads(f"[{section_content}]")
+                                    template[key] = items
+                                except:
+                                    # If that fails, extract individual items
+                                    items = []
+                                    item_matches = re.finditer(r'\{(.*?)\}', section_content, re.DOTALL)
+                                    for item_match in item_matches:
+                                        item_str = '{' + item_match.group(1) + '}'
+                                        try:
+                                            item = json.loads(repair_json(item_str))
+                                            items.append(item)
+                                        except:
+                                            pass
+                                    template[key] = items
+                    
+                    # Use the repaired template
+                    content_gaps = template
+                    
+                except Exception as e3:
+                    logger.error(f"All JSON repair attempts failed: {e3}")
+                    # Create a minimal structure
+                    content_gaps = {
+                        "missing_headings": [],
+                        "revised_headings": [],
+                        "content_gaps": [{"topic": "Error in content analysis", "details": "There was an error processing the analysis. Please try again.", "suggested_content": ""}],
+                        "expansion_areas": [],
+                        "semantic_relevancy_issues": [],
+                        "term_usage_issues": [],
+                        "unanswered_questions": []
+                    }
+        
+        # Validate the structure has all required keys
+        for key in ["missing_headings", "revised_headings", "content_gaps", "expansion_areas",
+                    "semantic_relevancy_issues", "term_usage_issues", "unanswered_questions"]:
+            if key not in content_gaps:
+                content_gaps[key] = []
+        
+        return content_gaps, True
+    
+    except Exception as e:
+        error_msg = f"Exception in analyze_content_gaps: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        
+        # Return minimal valid structure
+        return {
+            "missing_headings": [],
+            "revised_headings": [],
+            "content_gaps": [{"topic": "Error in analysis", "details": f"Error: {str(e)}", "suggested_content": ""}],
+            "expansion_areas": [],
+            "semantic_relevancy_issues": [],
+            "term_usage_issues": [],
+            "unanswered_questions": []
+        }, False
+
+def create_updated_document(existing_content: Dict, content_gaps: Dict, keyword: str, score_data: Dict = None) -> Tuple[BytesIO, bool]:
+    """
+    Enhanced document creation with content score information
+    Returns: document_stream, success_status
+    """
+    try:
+        doc = Document()
+        
+        # Add title
+        doc.add_heading(f'Content Update Recommendations: {keyword}', 0)
+        
+        # Add date
+        doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Add content score if available
+        if score_data:
+            score_section = doc.add_heading('Content Score Assessment', 1)
+            
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            
+            score_para = doc.add_paragraph()
+            score_para.add_run(f"Overall Score: ").bold = True
+            score_run = score_para.add_run(f"{overall_score} ({grade})")
+            
+            # Color the score based on value
+            if overall_score >= 70:
+                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            elif overall_score < 50:
+                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            else:
+                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            
+            # Component scores
+            if 'components' in score_data:
+                components = score_data.get('components', {})
+                
+                component_table = doc.add_table(rows=1, cols=2)
+                component_table.style = 'Table Grid'
+                
+                header_cells = component_table.rows[0].cells
+                header_cells[0].text = 'Component'
+                header_cells[1].text = 'Score'
+                
+                for component, score in components.items():
+                    row_cells = component_table.add_row().cells
+                    component_name = component.replace('_score', '').replace('_', ' ').title()
+                    row_cells[0].text = component_name
+                    row_cells[1].text = str(score)
+            
+            # Score improvement projection
+            doc.add_paragraph()
+            improvement_para = doc.add_paragraph()
+            improvement_para.add_run("Projected Score After Updates: ").bold = True
+            
+            # Calculate projected improvement
+            projected_score = min(100, overall_score + 20)  # Assume ~20 point improvement
+            projected_grade = get_score_grade(projected_score)
+            
+            projected_run = improvement_para.add_run(f"{projected_score} ({projected_grade})")
+            projected_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            
+            doc.add_paragraph("Implementing the recommendations in this document is projected to significantly improve your content's search optimization score.")
+        
+        # Executive Summary
+        doc.add_heading('Executive Summary', 1)
+        summary = doc.add_paragraph()
+        summary.add_run(f"This document contains recommended updates to improve your content for the target keyword '{keyword}'. ")
+        summary.add_run("Based on competitor analysis and search trends, we recommend the following improvements:")
+        
+        # Add bullet points summarizing key recommendations
+        recommendations = []
+        if content_gaps.get('semantic_relevancy_issues'):
+            recommendations.append("Improve semantic relevancy to better target the keyword")
+        if content_gaps.get('term_usage_issues'):
+            recommendations.append(f"Address {len(content_gaps.get('term_usage_issues', []))} term usage issues")
+        if content_gaps.get('missing_headings'):
+            recommendations.append(f"Add {len(content_gaps.get('missing_headings', []))} new sections")
+        if content_gaps.get('revised_headings'):
+            recommendations.append(f"Revise {len(content_gaps.get('revised_headings', []))} existing headings")
+        if content_gaps.get('content_gaps'):
+            recommendations.append(f"Address {len(content_gaps.get('content_gaps', []))} content gaps")
+        if content_gaps.get('expansion_areas'):
+            recommendations.append(f"Expand {len(content_gaps.get('expansion_areas', []))} sections")
+        if content_gaps.get('unanswered_questions'):
+            recommendations.append(f"Address {len(content_gaps.get('unanswered_questions', []))} 'People Also Asked' questions")
+        
+        for rec in recommendations:
+            rec_para = doc.add_paragraph(rec, style='List Bullet')
+        
+        # 1. Semantic Relevancy Issues Section
+        if content_gaps.get('semantic_relevancy_issues'):
+            doc.add_heading('Semantic Relevancy Recommendations', 1)
+            
+            explanation = doc.add_paragraph()
+            explanation.add_run(f"Your content appears to be focused more broadly than the target keyword '{keyword}'. ")
+            explanation.add_run("The following recommendations will help align your content more closely with search intent:")
+            
+            for issue in content_gaps.get('semantic_relevancy_issues', []):
+                section = issue.get('section', '')
+                doc.add_heading(section, 2)
+                
+                issue_para = doc.add_paragraph()
+                issue_para.add_run("Issue: ").bold = True
+                issue_para.add_run(issue.get('issue', ''))
+                
+                rec_para = doc.add_paragraph()
+                rec_para.add_run("Recommendation: ").bold = True
+                rec_text = rec_para.add_run(issue.get('recommendation', ''))
+                rec_text.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                doc.add_paragraph()  # Add spacing
+        
+        # Term Usage Issues (New Section)
+        if content_gaps.get('term_usage_issues'):
+            doc.add_heading('Term Usage Recommendations', 1)
+            
+            term_intro = doc.add_paragraph()
+            term_intro.add_run("To improve your content's semantic relevance and keyword targeting, add these important terms:")
+            
+            term_table = doc.add_table(rows=1, cols=3)
+            term_table.style = 'Table Grid'
+            
+            # Add header row
+            header_cells = term_table.rows[0].cells
+            header_cells[0].text = 'Term'
+            header_cells[1].text = 'Section'
+            header_cells[2].text = 'Recommendation'
+            
+            for issue in content_gaps.get('term_usage_issues', []):
+                row_cells = term_table.add_row().cells
+                term_run = row_cells[0].paragraphs[0].add_run(issue.get('term', ''))
+                term_run.bold = True
+                
+                row_cells[1].text = issue.get('section', '')
+                row_cells[2].text = issue.get('suggestion', '')
+            
+            doc.add_paragraph()  # Add spacing
+        
+        # 2. Content Structure Recommendations
+        doc.add_heading('Content Structure Recommendations', 1)
+        
+        # a. Heading Revisions
+        if content_gaps.get('revised_headings'):
+            doc.add_heading('Heading Revisions', 2)
+            heading_intro = doc.add_paragraph()
+            heading_intro.add_run("The following heading changes will improve your content's focus and SEO performance:")
+            
+            table = doc.add_table(rows=1, cols=3)
+            table.style = 'Table Grid'
+            
+            # Add header row
+            header_cells = table.rows[0].cells
+            header_cells[0].text = 'Current Heading'
+            header_cells[1].text = 'Recommended Heading'
+            header_cells[2].text = 'Rationale'
+            
+            for revision in content_gaps.get('revised_headings', []):
+                row_cells = table.add_row().cells
+                
+                # Current heading
+                row_cells[0].text = revision.get('original', '')
+                
+                # Recommended heading in red
+                recommended_heading = row_cells[1].paragraphs[0].add_run(revision.get('suggested', ''))
+                recommended_heading.font.color.rgb = RGBColor(255, 0, 0)
+                
+                # Rationale
+                row_cells[2].text = revision.get('reason', '')
+            
+            doc.add_paragraph()  # Add spacing
+            
+        # b. New Sections to Add
+        if content_gaps.get('missing_headings'):
+            doc.add_heading('Recommended New Sections', 2)
+            
+            sections_intro = doc.add_paragraph()
+            sections_intro.add_run("Add the following sections to make your content more comprehensive:")
+            
+            for heading in content_gaps.get('missing_headings', []):
+                heading_level = heading.get('level', 2)
+                heading_text = heading.get('heading', '')
+                
+                # Make H3 or H4 for better document structure
+                actual_level = min(heading_level + 1, 3)
+                heading_para = doc.add_heading(heading_text, level=actual_level)
+                heading_para.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                
+                # Where to insert
+                position_para = doc.add_paragraph()
+                position_para.add_run("Placement: ").bold = True
+                position_para.add_run(f"After '{heading.get('insert_after', 'END')}' section")
+                
+                # Content suggestion
+                if heading.get('suggested_content'):
+                    content_para = doc.add_paragraph()
+                    content_para.add_run("Content to include: ").bold = True
+                    content_para.add_run(heading.get('suggested_content', ''))
+                
+                doc.add_paragraph()  # Add spacing
+        
+        # 3. Content Gap Recommendations
+        if content_gaps.get('content_gaps') or content_gaps.get('expansion_areas'):
+            doc.add_heading('Content Gap Recommendations', 1)
+            
+            # a. Missing Topics
+            if content_gaps.get('content_gaps'):
+                doc.add_heading('Key Topics to Add', 2)
+                
+                topics_intro = doc.add_paragraph()
+                topics_intro.add_run("The following topics are covered by competitors but missing in your content:")
+                
+                for gap in content_gaps.get('content_gaps', []):
+                    topic_heading = doc.add_heading(gap.get('topic', ''), 3)
+                    topic_heading.runs[0].font.color.rgb = RGBColor(255, 0, 0)  # Red
+                    
+                    issue_para = doc.add_paragraph()
+                    issue_para.add_run("Gap: ").bold = True
+                    issue_para.add_run(gap.get('details', ''))
+                    
+                    if gap.get('suggested_content'):
+                        content_para = doc.add_paragraph()
+                        content_para.add_run("Suggested Content: ").bold = True
+                        content_para.add_run(gap.get('suggested_content', ''))
+                    
+                    doc.add_paragraph()  # Add spacing
+            
+            # b. Areas to Expand
+            if content_gaps.get('expansion_areas'):
+                doc.add_heading('Areas to Expand', 2)
+                
+                expansion_intro = doc.add_paragraph()
+                expansion_intro.add_run("Enhance the following sections with additional content:")
+                
+                for area in content_gaps.get('expansion_areas', []):
+                    area_heading = doc.add_heading(area.get('section', ''), 3)
+                    
+                    reason_para = doc.add_paragraph()
+                    reason_para.add_run("Reason for expansion: ").bold = True
+                    reason_para.add_run(area.get('reason', ''))
+                    
+                    if area.get('suggested_content'):
+                        content_para = doc.add_paragraph()
+                        content_para.add_run("Content to add: ").bold = True
+                        content_para.add_run(area.get('suggested_content', ''))
+                    
+                    doc.add_paragraph()  # Add spacing
+        
+        # 4. People Also Asked Recommendations
+        if content_gaps.get('unanswered_questions'):
+            doc.add_heading('People Also Asked Questions to Address', 1)
+            
+            paa_intro = doc.add_paragraph()
+            paa_intro.add_run("Incorporate answers to these common questions to improve your content's search relevance:")
+            
+            for question in content_gaps.get('unanswered_questions', []):
+                q_para = doc.add_paragraph()
+                q_para.add_run("Question: ").bold = True
+                q_text = q_para.add_run(question.get('question', ''))
+                q_text.italic = True
+                
+                if question.get('insert_into_section'):
+                    section_para = doc.add_paragraph()
+                    section_para.add_run("Recommended section: ").bold = True
+                    section_para.add_run(question.get('insert_into_section', ''))
+                
+                if question.get('suggested_answer'):
+                    answer_para = doc.add_paragraph()
+                    answer_para.add_run("Suggested answer: ").bold = True
+                    answer_para.add_run(question.get('suggested_answer', ''))
+                
+                doc.add_paragraph()  # Add spacing
+                
+        # 5. Implementation Guide
+        doc.add_heading('Implementation Guide', 1)
+        
+        guide_para = doc.add_paragraph()
+        guide_para.add_run("To implement these recommendations effectively:").bold = True
+        
+        implementation_steps = [
+            "Start by addressing the semantic relevancy issues to align your content with the target keyword",
+            "Add missing important terms to improve keyword targeting and relevance",
+            "Update headings to improve clarity and search relevance",
+            "Add missing sections in the recommended locations",
+            "Incorporate answers to 'People Also Asked' questions to address search intent",
+            "Expand thin areas with additional, valuable content",
+            "After making these changes, review the content as a whole to ensure natural flow and consistency"
+        ]
+        
+        for step in implementation_steps:
+            step_para = doc.add_paragraph(step, style='List Number')
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream, True
+    
+    except Exception as e:
+        error_msg = f"Exception in create_updated_document: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return BytesIO(), False
+
+def generate_optimized_article_with_tracking(existing_content: Dict, competitor_contents: List[Dict], 
+                              semantic_structure: Dict, related_keywords: List[Dict],
+                              keyword: str, paa_questions: List[Dict], term_data: Dict,
+                              anthropic_api_key: str, target_word_count: int = 1800) -> Tuple[str, str, bool]:
+    """
+    Enhanced article generation that incorporates term data using Claude 3.7 Sonnet
+    Returns: optimized_html_content, change_summary, success_status
+    """
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+        
+        # Extract existing content structure
+        original_content = existing_content.get('full_text', '')
+        existing_headings = existing_content.get('headings', [])
+        
+        # Estimate words per section based on target word count and structure
+        num_sections = len(semantic_structure.get('sections', []))
+        if num_sections == 0:
+            num_sections = 5  # Default if no sections defined
+        
+        # Calculate target words per section (allowing 15% for H1 and conclusion)
+        words_per_section = int((target_word_count * 0.85) / num_sections)
+        
+        # Get section text for each heading to process sections individually
+        section_content = {}
+        for i, heading in enumerate(existing_headings):
+            heading_text = heading.get('text', '')
+            paragraphs = heading.get('paragraphs', [])
+            section_text = "\n\n".join(paragraphs)
+            section_content[heading_text] = section_text
+        
+        # Process the content section by section
+        optimized_sections = []
+        
+        # Track changes by category
+        structure_changes = []
+        content_additions = []
+        content_improvements = []
+        
+        # First, generate the new structure
+        h1 = semantic_structure.get('h1', f"Complete Guide to {keyword}")
+        optimized_sections.append(f"<h1>{h1}</h1>")
+        
+        # Track word count
+        current_word_count = len(h1.split())
+        
+        # Track what original headings have been processed
+        processed_headings = set()
+        
+        # Prepare important terms data
+        primary_terms_str = ""
+        if term_data and 'primary_terms' in term_data:
+            primary_terms = []
+            for term_info in term_data.get('primary_terms', [])[:10]:  # Top 10 primary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                usage = term_info.get('recommended_usage', 1)
+                if term:
+                    primary_terms.append(f"{term} (importance: {importance:.2f}, usage: {usage})")
+            
+            primary_terms_str = "\n".join(primary_terms)
+        
+        secondary_terms_str = ""
+        if term_data and 'secondary_terms' in term_data:
+            secondary_terms = []
+            for term_info in term_data.get('secondary_terms', [])[:15]:  # Top 15 secondary terms
+                term = term_info.get('term', '')
+                importance = term_info.get('importance', 0)
+                if term and importance > 0.5:
+                    secondary_terms.append(f"{term} (importance: {importance:.2f})")
+            
+            secondary_terms_str = "\n".join(secondary_terms)
+        
+        topics_to_cover_str = ""
+        if term_data and 'topics' in term_data:
+            topics = []
+            for topic_info in term_data.get('topics', []):
+                topic = topic_info.get('topic', '')
+                description = topic_info.get('description', '')
+                if topic:
+                    topics.append(f"{topic}: {description}")
+            
+            topics_to_cover_str = "\n".join(topics)
+        
+        # For each recommended section in the new structure
+        for section in semantic_structure.get('sections', []):
+            h2 = section.get('h2', '')
+            if not h2:
+                continue
+                
+            # Skip sections if we're already approaching the target word count
+            if current_word_count > (target_word_count * 0.85):
+                break
+                
+            # Find most relevant original heading for this section
+            matching_response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=50,
+                system="You are an expert at matching content sections.",
+                messages=[
+                    {"role": "user", "content": f"""
+                        Find the most relevant heading from the original content that matches this new section:
+                        
+                        New section: {h2}
+                        
+                        Original headings to choose from:
+                        {json.dumps([h.get('text', '') for h in existing_headings if h.get('text', '') not in processed_headings], indent=2)}
+                        
+                        Return ONLY the exact text of the best matching original heading, or "NONE" if no good match exists.
+                    """}
+                ],
+                temperature=0.1
+            )
+            
+            matching_heading = matching_response.content[0].text.strip()
+            optimized_sections.append(f"<h2>{h2}</h2>")
+            current_word_count += len(h2.split())
+            
+            # Calculate words available for this section and its subsections
+            subsection_count = len(section.get('subsections', []))
+            # If there are subsections, allocate 60% to the main section and 40% to subsections
+            if subsection_count > 0:
+                section_word_limit = int(words_per_section * 0.6)
+                subsection_word_limit = int((words_per_section * 0.4) / subsection_count)
+            else:
+                section_word_limit = words_per_section
+                subsection_word_limit = 0
+            
+            if matching_heading == "NONE" or matching_heading not in section_content:
+                # No matching content found - create new section with controlled length
+                section_content_response = client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML
+                    system="You are an expert content writer focused on concise, informative content.",
+                    messages=[
+                        {"role": "user", "content": f"""
+                            Write content for this section about "{keyword}": {h2}
+                            
+                            Requirements:
+                            1. Include relevant information based on competitor content
+                            2. Improve semantic relevance to the keyword
+                            3. STRICTLY limit to {section_word_limit} words
+                            4. Create substantive, non-fluff content
+                            
+                            Important terms to include:
+                            Primary terms (use these if relevant):
+                            {primary_terms_str}
+                            
+                            Secondary terms (try to include these if relevant):
+                            {secondary_terms_str}
+                            
+                            Key topics to cover (if relevant to this section):
+                            {topics_to_cover_str}
+                            
+                            Format with proper HTML paragraph tags.
+                        """}
+                    ],
+                    temperature=0.4
+                )
+                
+                new_section_content = section_content_response.content[0].text
+                optimized_sections.append(new_section_content)
+                
+                # Estimate added word count
+                section_words = len(re.findall(r'\b\w+\b', new_section_content))
+                current_word_count += section_words
+                
+                # Track change
+                content_additions.append(f"Added new section '{h2}' based on competitor analysis")
+                structure_changes.append(f"Added new section: {h2}")
+                
+            else:
+                # Found matching content - preserve and enhance
+                processed_headings.add(matching_heading)
+                original_section_content = section_content.get(matching_heading, '')
+                
+                # Enhance this section with strict word count limit
+                enhanced_section_response = client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=section_word_limit * 2,  # Allow some extra tokens for HTML and improvements
+                    system="You are an expert at enhancing content while preserving value and maintaining conciseness.",
+                    messages=[
+                        {"role": "user", "content": f"""
+                            Enhance this original content section while PRESERVING its value.
+                            
+                            Original heading: {matching_heading}
+                            New heading: {h2}
+                            
+                            Original content:
+                            {original_section_content}
+                            
+                            Instructions:
+                            1. Keep all valuable information from the original content
+                            2. Preserve specific examples, data points, and unique insights
+                            3. Improve semantic relevance to keyword "{keyword}"
+                            4. Fix any unclear writing but maintain the original voice
+                            5. STRICTLY limit to {section_word_limit} words
+                            
+                            Important terms to include or increase usage of:
+                            Primary terms (use these if relevant):
+                            {primary_terms_str}
+                            
+                            Secondary terms (try to include these if relevant):
+                            {secondary_terms_str}
+                            
+                            Format with proper HTML paragraph tags.
+                            
+                            Also provide a single sentence summary of the key improvements you made:
+                            IMPROVEMENTS: [single sentence summary of key improvements]
+                        """}
+                    ],
+                    temperature=0.3
+                )
+                
+                enhanced_response = enhanced_section_response.content[0].text
+                
+                # Extract improvements summary
+                improvements_summary = ""
+                if "IMPROVEMENTS:" in enhanced_response:
+                    content_parts = enhanced_response.split("IMPROVEMENTS:")
+                    enhanced_content = content_parts[0].strip()
+                    improvements_summary = content_parts[1].strip()
+                    
+                    # Add to improvement tracking
+                    if matching_heading != h2:
+                        structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
+                    
+                    content_improvements.append(f"Enhanced '{h2}': {improvements_summary}")
+                else:
+                    enhanced_content = enhanced_response
+                    if matching_heading != h2:
+                        structure_changes.append(f"Renamed '{matching_heading}' to '{h2}'")
+                
+                optimized_sections.append(enhanced_content)
+                
+                # Estimate added word count
+                section_words = len(re.findall(r'\b\w+\b', enhanced_content))
+                current_word_count += section_words
+            
+            # Process H3 subsections - but only if we have word count budget remaining
+            if current_word_count < target_word_count:
+                # Only process up to 3 subsections per section to control length
+                for subsection in section.get('subsections', [])[:3]:
+                    h3 = subsection.get('h3', '')
+                    if not h3:
+                        continue
+                    
+                    # Skip if we're getting too close to target word count
+                    if current_word_count > (target_word_count * 0.95):
+                        break
+                    
+                    optimized_sections.append(f"<h3>{h3}</h3>")
+                    current_word_count += len(h3.split())
+                    
+                    # Generate content for this subsection with strict word limit
+                    subsection_content_response = client.messages.create(
+                        model="claude-3-5-sonnet-20241022",
+                        max_tokens=subsection_word_limit * 2,  # Allow some extra tokens for HTML
+                        system="You are an expert content writer focused on brevity and impact.",
+                        messages=[
+                            {"role": "user", "content": f"""
+                                Write concise content for this subsection about "{keyword}": {h3} (under main section {h2})
+                                
+                                Requirements:
+                                1. Include ONLY the most essential information
+                                2. Improve semantic relevance to keyword
+                                3. STRICTLY limit to {subsection_word_limit} words total
+                                4. Be substantive and informative despite brevity
+                                
+                                Important terms to include if relevant:
+                                Primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                                
+                                Format with proper HTML paragraph tags.
+                            """}
+                        ],
+                        temperature=0.4
+                    )
+                    
+                    subsection_content = subsection_content_response.content[0].text
+                    optimized_sections.append(subsection_content)
+                    
+                    # Estimate added word count
+                    subsection_words = len(re.findall(r'\b\w+\b', subsection_content))
+                    current_word_count += subsection_words
+                    
+                    # Track change
+                    structure_changes.append(f"Added subsection: {h3} under {h2}")
+        
+        # Add a conclusion if we have room
+        if current_word_count < (target_word_count * 0.95):
+            optimized_sections.append("<h2>Conclusion</h2>")
+            
+            conclusion_word_limit = min(200, target_word_count - current_word_count)
+            
+            conclusion_response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=conclusion_word_limit * 2,  # Allow some extra tokens for HTML
+                system="You are an expert at writing concise, impactful conclusions.",
+                messages=[
+                    {"role": "user", "content": f"""
+                        Write a brief conclusion for an article about "{keyword}".
+                        
+                        Requirements:
+                        1. Summarize key points
+                        2. Include a call to action
+                        3. Reinforce the keyword relevance
+                        4. Include at least 2 primary terms: {', '.join([term_info.get('term', '') for term_info in term_data.get('primary_terms', [])[:5]])}
+                        5. STRICTLY limit to {conclusion_word_limit} words
+                        
+                        Format with proper HTML paragraph tags.
+                    """}
+                ],
+                temperature=0.4
+            )
+            
+            conclusion_content = conclusion_response.content[0].text
+            optimized_sections.append(conclusion_content)
+        
+        # Create final document with change summary
+        optimized_html = "\n".join(optimized_sections)
+        
+        # Create a more user-friendly change summary
+        change_summary = f"""
+        <div class="change-summary">
+            <h2>Optimization Summary</h2>
+            
+            <p>This document has been optimized for the keyword <strong>"{keyword}"</strong> while preserving valuable original content.</p>
+            
+            <h3>Key Improvements:</h3>
+            <ul>
+                <li>Restructured content to better match search intent</li>
+                <li>Enhanced keyword relevance throughout the document</li>
+                <li>Created a focused article of approximately {current_word_count} words</li>
+                <li>Added {len(content_additions)} new sections to address content gaps</li>
+                <li>Incorporated important terms identified in top-ranking content</li>
+            </ul>
+            
+            <h3>Structure Changes:</h3>
+            <ul>
+                {"".join(f"<li>{change}</li>" for change in structure_changes[:5])}
+                {f"<li>Plus {len(structure_changes) - 5} additional structure changes</li>" if len(structure_changes) > 5 else ""}
+            </ul>
+            
+            <h3>Content Enhancements:</h3>
+            <ul>
+                {"".join(f"<li>{improvement}</li>" for improvement in content_improvements[:5])}
+                {f"<li>Plus {len(content_improvements) - 5} additional content improvements</li>" if len(content_improvements) > 5 else ""}
+            </ul>
+        </div>
+        """
+        
+        return optimized_html, change_summary, True
+        
+    except Exception as e:
+        error_msg = f"Exception in generate_optimized_article_with_tracking: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return "", "", False
+
+def create_word_document_from_html(html_content: str, keyword: str, change_summary: str = "", 
+                                  score_data: Dict = None) -> BytesIO:
+    """
+    Enhanced document creation with content score information
+    Returns: document_stream
+    """
+    try:
+        doc = Document()
+        
+        # Add document title
+        title = doc.add_heading(f'Optimized Content: {keyword}', 0)
+        title.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        
+        # Add date
+        date_para = doc.add_paragraph(f"Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        date_para.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        
+        # Add horizontal line
+        doc.add_paragraph("_" * 50)
+        
+        # Add content score if available
+        if score_data:
+            doc.add_heading("Content Score", 1)
+            
+            score_para = doc.add_paragraph()
+            score_para.add_run(f"Overall Score: ").bold = True
+            
+            overall_score = score_data.get('overall_score', 0)
+            grade = score_data.get('grade', 'F')
+            
+            score_run = score_para.add_run(f"{overall_score} ({grade})")
+            
+            # Color the score based on value
+            if overall_score >= 70:
+                score_run.font.color.rgb = RGBColor(0, 128, 0)  # Green
+            elif overall_score < 50:
+                score_run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+            else:
+                score_run.font.color.rgb = RGBColor(255, 165, 0)  # Orange
+            
+            # Component scores
+            components = score_data.get('components', {})
+            for component, score in components.items():
+                component_para = doc.add_paragraph(style='List Bullet')
+                component_name = component.replace('_score', '').replace('_', ' ').title()
+                component_para.add_run(f"{component_name}: ").bold = True
+                component_para.add_run(f"{score}")
+            
+            # Add separator
+            doc.add_paragraph("_" * 50)
+        
+        # Add change summary if provided
+        if change_summary:
+            doc.add_heading("Optimization Summary", 1)
+            
+            # Parse HTML summary
+            summary_soup = BeautifulSoup(change_summary, 'html.parser')
+            
+            # Extract key points
+            for h3 in summary_soup.find_all('h3'):
+                doc.add_heading(h3.get_text(), 2)
+                
+                # Get the list that follows this heading
+                ul = h3.find_next('ul')
+                if ul:
+                    for li in ul.find_all('li'):
+                        doc.add_paragraph(li.get_text(), style='List Bullet')
+            
+            # Add separator before main content
+            doc.add_paragraph()
+            doc.add_paragraph("_" * 50)
+            doc.add_paragraph()
+        
+        # Add content heading
+        doc.add_heading("Optimized Content", 1)
+        
+        # IMPROVED: Line-by-line processing with better markdown heading detection
+        if html_content and isinstance(html_content, str):
+            # Split the content by lines
+            lines = html_content.split('\n')
+            
+            # Initialize list tracking
+            in_ul = False
+            in_ol = False
+            
+            # Helper function to process paragraph or list item text with styling
+            def add_styled_text(doc_element, text):
+                """Add text with inline styling to a paragraph or list item"""
+                # Process different types of formatting tags
+                bold_segments = re.finditer(r'<(strong|b)>(.*?)</\1>', text, re.IGNORECASE)
+                italic_segments = re.finditer(r'<(em|i)>(.*?)</\1>', text, re.IGNORECASE)
+                
+                # First, replace styled segments with markers
+                placeholders = {}
+                placeholder_id = 0
+                
+                # Process bold segments
+                for match in bold_segments:
+                    placeholder = f"__BOLD_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'bold', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Process italic segments
+                for match in italic_segments:
+                    placeholder = f"__ITALIC_{placeholder_id}__"
+                    placeholders[placeholder] = {'type': 'italic', 'text': match.group(2)}
+                    text = text.replace(match.group(0), placeholder, 1)
+                    placeholder_id += 1
+                
+                # Remove any remaining HTML tags
+                clean_text = re.sub(r'<[^>]+>', '', text)
+                
+                # Split by placeholders to find plain text segments
+                segments = []
+                last_end = 0
+                for match in re.finditer(r'__(BOLD|ITALIC)_\d+__', clean_text):
+                    # Add plain text before the placeholder
+                    if match.start() > last_end:
+                        segments.append({
+                            'type': 'plain',
+                            'text': clean_text[last_end:match.start()]
+                        })
+                    
+                    # Add the placeholder
+                    segments.append(placeholders[match.group(0)])
+                    last_end = match.end()
+                
+                # Add remaining plain text
+                if last_end < len(clean_text):
+                    segments.append({
+                        'type': 'plain',
+                        'text': clean_text[last_end:]
+                    })
+                
+                # Add each segment to the document element
+                for segment in segments:
+                    if not segment['text'].strip():
+                        continue
+                        
+                    if segment['type'] == 'plain':
+                        doc_element.add_run(segment['text'])
+                    elif segment['type'] == 'bold':
+                        run = doc_element.add_run(segment['text'])
+                        run.bold = True
+                    elif segment['type'] == 'italic':
+                        run = doc_element.add_run(segment['text'])
+                        run.italic = True
+            
+            # Process each line
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # First check for markdown headings
+                markdown_heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
+                if markdown_heading_match:
+                    # Count number of # symbols to determine heading level
+                    level = len(markdown_heading_match.group(1))
+                    heading_text = markdown_heading_match.group(2).strip()
+                    
+                    # Remove any HTML tags from the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=level)
+                        # Style the heading based on level
+                        if level == 1:
+                            heading.runs[0].font.size = Pt(16)
+                        elif level == 2:
+                            heading.runs[0].font.size = Pt(14)
+                        elif level == 3:
+                            heading.runs[0].font.size = Pt(12)
+                            heading.runs[0].italic = True
+                        elif level >= 4:
+                            heading.runs[0].font.size = Pt(10)
+                            heading.runs[0].italic = True
+                        
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                    continue
+                
+                # Check if this line is an HTML heading tag
+                h1_match = re.match(r'^<h1[^>]*>(.*?)</h1>$', line, re.IGNORECASE)
+                h2_match = re.match(r'^<h2[^>]*>(.*?)</h2>$', line, re.IGNORECASE)
+                h3_match = re.match(r'^<h3[^>]*>(.*?)</h3>$', line, re.IGNORECASE)
+                h4_match = re.match(r'^<h4[^>]*>(.*?)</h4>$', line, re.IGNORECASE)
+                h5_match = re.match(r'^<h5[^>]*>(.*?)</h5>$', line, re.IGNORECASE)
+                h6_match = re.match(r'^<h6[^>]*>(.*?)</h6>$', line, re.IGNORECASE)
+                
+                # Process heading matches
+                if h1_match:
+                    heading_text = h1_match.group(1)
+                    # Remove any HTML tags inside the heading
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=1)
+                        heading.runs[0].font.size = Pt(16)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h2_match:
+                    heading_text = h2_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=2)
+                        heading.runs[0].font.size = Pt(14)
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h3_match:
+                    heading_text = h3_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=3)
+                        heading.runs[0].font.size = Pt(12)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h4_match:
+                    heading_text = h4_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=4)
+                        heading.runs[0].font.size = Pt(11)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h5_match:
+                    heading_text = h5_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=5)
+                        heading.runs[0].font.size = Pt(10)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                elif h6_match:
+                    heading_text = h6_match.group(1)
+                    heading_text = re.sub(r'<[^>]+>', '', heading_text).strip()
+                    if heading_text:
+                        heading = doc.add_heading(heading_text, level=6)
+                        heading.runs[0].font.size = Pt(10)
+                        heading.runs[0].italic = True
+                        # Reset list state
+                        in_ul = False
+                        in_ol = False
+                
+                # Check for list starts and ends
+                elif re.match(r'^<ul[^>]*>', line, re.IGNORECASE):
+                    in_ul = True
+                    in_ol = False
+                elif re.match(r'^</ul>', line, re.IGNORECASE):
+                    in_ul = False
+                elif re.match(r'^<ol[^>]*>', line, re.IGNORECASE):
+                    in_ol = True
+                    in_ul = False
+                elif re.match(r'^</ol>', line, re.IGNORECASE):
+                    in_ol = False
+                
+                # Check if this line is a list item
+                elif re.match(r'^<li[^>]*>', line, re.IGNORECASE) and '</li>' in line.lower():
+                    # Extract list item content
+                    li_match = re.match(r'^<li[^>]*>(.*?)</li>$', line, re.IGNORECASE)
+                    if li_match:
+                        li_text = li_match.group(1)
+                        if li_text.strip():
+                            if in_ol:
+                                list_para = doc.add_paragraph(style='List Number')
+                                add_styled_text(list_para, li_text)
+                            else:  # Default to bullet if we're not sure
+                                list_para = doc.add_paragraph(style='List Bullet')
+                                add_styled_text(list_para, li_text)
+                
+                # Check if this line is a paragraph tag
+                elif re.match(r'^<p[^>]*>', line, re.IGNORECASE) and '</p>' in line.lower():
+                    # Extract paragraph content
+                    para_match = re.match(r'^<p[^>]*>(.*?)</p>$', line, re.IGNORECASE)
+                    if para_match:
+                        para_text = para_match.group(1)
+                        if para_text.strip():
+                            para = doc.add_paragraph()
+                            add_styled_text(para, para_text)
+                
+                # Check for markdown bullet points
+                elif line.startswith('* ') or line.startswith('- '):
+                    bullet_text = line[2:].strip()
+                    if bullet_text:
+                        bullet_para = doc.add_paragraph(style='List Bullet')
+                        add_styled_text(bullet_para, bullet_text)
+                
+                # Check for markdown numbered list
+                elif re.match(r'^\d+\.\s', line):
+                    num_text = re.sub(r'^\d+\.\s', '', line).strip()
+                    if num_text:
+                        num_para = doc.add_paragraph(style='List Number')
+                        add_styled_text(num_para, num_text)
+                
+                # If it's plain text (not starting with a tag), add as paragraph
+                elif not line.startswith('<'):
+                    para = doc.add_paragraph()
+                    para.add_run(line)
+                
+                # Otherwise, try to extract clean text from HTML
+                else:
+                    # Clean HTML tags and add as paragraph if content exists
+                    clean_text = re.sub(r'<[^>]+>', '', line).strip()
+                    if clean_text:
+                        para = doc.add_paragraph()
+                        para.add_run(clean_text)
+        
+        # Save document to memory stream
+        doc_stream = BytesIO()
+        doc.save(doc_stream)
+        doc_stream.seek(0)
+        
+        return doc_stream
+    
+    except Exception as e:
+        error_msg = f"Exception in create_word_document_from_html: {str(e)}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        return BytesIO()
+
+###############################################################################
 # 12. Main Streamlit App
 ###############################################################################
 
@@ -1971,22 +3803,11 @@ def main():
     # Sidebar for API credentials
     st.sidebar.header("API Credentials")
     
-    # NEW: FireCrawl API key
-    firecrawl_api_key = st.sidebar.text_input("FireCrawl API Key", type="password", 
-                                             help="API key for FireCrawl web scraping service")
-    
     dataforseo_login = st.sidebar.text_input("DataForSEO API Login", type="password")
     dataforseo_password = st.sidebar.text_input("DataForSEO API Password", type="password")
     
     openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
     anthropic_api_key = st.sidebar.text_input("Anthropic API Key", type="password")
-    
-    # NEW: FireCrawl Settings
-    with st.sidebar.expander("FireCrawl Settings"):
-        max_concurrency = st.slider("Max Concurrency", 1, 10, 5,
-                               help="Maximum number of concurrent FireCrawl requests")
-        scrape_results_count = st.slider("Results to Scrape", 10, 20, 20,
-                                    help="Number of top search results to scrape and analyze")
     
     # Initialize session state
     if 'results' not in st.session_state:
@@ -2017,7 +3838,7 @@ def main():
                 st.error("Please enter API keys for OpenAI and Anthropic")
             else:
                 with st.spinner("Fetching SERP data..."):
-                    # Fetch SERP results (updated to get 20 results for clustering)
+                    # Fetch SERP results (updated function with PAA questions)
                     start_time = time.time()
                     organic_results, serp_features, paa_questions, serp_success = fetch_serp_results(
                         keyword, dataforseo_login, dataforseo_password
@@ -2030,7 +3851,7 @@ def main():
                         st.session_state.results['paa_questions'] = paa_questions
                         
                         # Show SERP results
-                        st.subheader("Top Organic Results")
+                        st.subheader("Top 10 Organic Results")
                         df_results = pd.DataFrame(organic_results)
                         st.dataframe(df_results)
                         
@@ -2097,35 +3918,58 @@ def main():
             if st.button("Analyze Content"):
                 if not anthropic_api_key:
                     st.error("Please enter Anthropic API key")
-                elif not openai_api_key:
-                    st.error("Please enter OpenAI API key for embedding generation")
                 else:
                     with st.spinner("Analyzing content from top-ranking pages..."):
                         start_time = time.time()
                         
-                        # Use the enhanced analysis function with FireCrawl and clustering
-                        analysis_data, analysis_success = analyse(
-                            st.session_state.results['keyword'],
-                            st.session_state.results['organic_results'],
-                            openai_api_key,
-                            anthropic_api_key,
-                            firecrawl_api_key,
-                            max_results=scrape_results_count
+                        # Scrape and analyze content from top pages
+                        scraped_contents = []
+                        progress_bar = st.progress(0)
+                        
+                        for i, result in enumerate(st.session_state.results['organic_results']):
+                            st.text(f"Scraping content from {result['url']}...")
+                            content, success = scrape_webpage(result['url'])
+                            
+                            if success and content and content != "[Content not accessible due to site restrictions]":
+                                scraped_contents.append({
+                                    'url': result['url'],
+                                    'title': result['title'],
+                                    'content': content
+                                })
+                                
+                                # Also extract headings
+                                headings = extract_headings(result['url'])
+                                scraped_contents[-1]['headings'] = headings
+                            else:
+                                st.warning(f"Could not scrape content from {result['url']}")
+                            
+                            progress_bar.progress((i + 1) / len(st.session_state.results['organic_results']))
+                        
+                        if not scraped_contents:
+                            st.error("Could not scrape content from any URLs. Please try a different keyword.")
+                            return
+                            
+                        st.session_state.results['scraped_contents'] = scraped_contents
+                        
+                        # Analyze semantic structure using Claude
+                        st.text("Analyzing semantic structure...")
+                        semantic_structure, structure_success = analyze_semantic_structure(
+                            scraped_contents, anthropic_api_key
                         )
+                        
+                        if structure_success:
+                            st.session_state.results['semantic_structure'] = semantic_structure
                             
-                        if analysis_success:
-                            # Store results
-                            st.session_state.results['analysis_data'] = analysis_data
-                            st.session_state.results['semantic_structure'] = analysis_data['semantic_structure']
-                            st.session_state.results['term_data'] = analysis_data['term_data']
-                            st.session_state.results['scraped_contents'] = analysis_data['competitor_contents']
-                            st.session_state.results['heading_counts'] = analysis_data.get('heading_counts', {})
-                            st.session_state.results['writer_guide'] = analysis_data.get('writer_guide', {})
+                            # Extract important terms using Claude
+                            st.text("Extracting important terms and topics...")
+                            term_data, term_success = extract_important_terms(
+                                scraped_contents, anthropic_api_key
+                            )
                             
-                            # Display semantic structure
+                            if term_success:
+                                st.session_state.results['term_data'] = term_data
+                            
                             st.subheader("Recommended Semantic Structure")
-                            semantic_structure = analysis_data['semantic_structure']
-                            
                             st.write(f"**H1:** {semantic_structure.get('h1', '')}")
                             
                             for i, section in enumerate(semantic_structure.get('sections', []), 1):
@@ -2134,52 +3978,8 @@ def main():
                                 for j, subsection in enumerate(section.get('subsections', []), 1):
                                     st.write(f"  - **H3 {i}.{j}:** {subsection.get('h3', '')}")
                             
-                            # Display clustered content information
-                            st.subheader("Content Clusters")
-                            clustered_contents = analysis_data['competitor_contents']
-                            cluster_counts = {}
-                            
-                            for content in clustered_contents:
-                                cluster_id = content.get('cluster', -1)
-                                if cluster_id in cluster_counts:
-                                    cluster_counts[cluster_id] += 1
-                                else:
-                                    cluster_counts[cluster_id] = 1
-                            
-                            cluster_df = pd.DataFrame({
-                                'Cluster': list(cluster_counts.keys()),
-                                'Count': list(cluster_counts.values())
-                            })
-                            
-                            st.bar_chart(cluster_df.set_index('Cluster'))
-                            
-                            # Display heading frequency data
-                            st.subheader("Common Headings")
-                            heading_counts = analysis_data.get('heading_counts', {})
-                            
-                            with st.expander("H2 Heading Frequency"):
-                                h2_counts = heading_counts.get('h2', {})
-                                if h2_counts:
-                                    h2_df = pd.DataFrame({
-                                        'Heading': list(h2_counts.keys()),
-                                        'Count': list(h2_counts.values())
-                                    }).sort_values('Count', ascending=False).head(15)
-                                    
-                                    st.dataframe(h2_df)
-                            
-                            with st.expander("H3 Heading Frequency"):
-                                h3_counts = heading_counts.get('h3', {})
-                                if h3_counts:
-                                    h3_df = pd.DataFrame({
-                                        'Heading': list(h3_counts.keys()),
-                                        'Count': list(h3_counts.values())
-                                    }).sort_values('Count', ascending=False).head(15)
-                                    
-                                    st.dataframe(h3_df)
-                            
-                            # Display term data
-                            with st.expander("View Extracted Terms & Topics"):
-                                term_data = analysis_data['term_data']
+                            if term_success:
+                                st.subheader("Important Terms")
                                 
                                 # Display primary terms
                                 if 'primary_terms' in term_data:
@@ -2192,16 +3992,10 @@ def main():
                                     st.write("**Secondary Terms:**")
                                     secondary_df = pd.DataFrame(term_data['secondary_terms'])
                                     st.dataframe(secondary_df)
-                                
-                                # Display topics
-                                if 'topics' in term_data:
-                                    st.write("**Topics to Cover:**")
-                                    topics_df = pd.DataFrame(term_data['topics'])
-                                    st.dataframe(topics_df)
                             
                             st.success(f"Content analysis completed in {format_time(time.time() - start_time)}")
                         else:
-                            st.error("Failed to analyze content")
+                            st.error("Failed to analyze semantic structure")
             
             # Show previously analyzed structure if available
             if 'semantic_structure' in st.session_state.results:
@@ -2215,31 +4009,6 @@ def main():
                     
                     for j, subsection in enumerate(section.get('subsections', []), 1):
                         st.write(f"  - **H3 {i}.{j}:** {subsection.get('h3', '')}")
-                
-                # Show heading counts if available
-                if 'heading_counts' in st.session_state.results:
-                    with st.expander("View Common Headings"):
-                        heading_counts = st.session_state.results['heading_counts']
-                        
-                        st.write("**H2 Heading Frequency:**")
-                        h2_counts = heading_counts.get('h2', {})
-                        if h2_counts:
-                            h2_df = pd.DataFrame({
-                                'Heading': list(h2_counts.keys()),
-                                'Count': list(h2_counts.values())
-                            }).sort_values('Count', ascending=False).head(15)
-                            
-                            st.dataframe(h2_df)
-                        
-                        st.write("**H3 Heading Frequency:**")
-                        h3_counts = heading_counts.get('h3', {})
-                        if h3_counts:
-                            h3_df = pd.DataFrame({
-                                'Heading': list(h3_counts.keys()),
-                                'Count': list(h3_counts.values())
-                            }).sort_values('Count', ascending=False).head(15)
-                            
-                            st.dataframe(h3_df)
                 
                 # Show previously extracted term data if available
                 if 'term_data' in st.session_state.results:
@@ -2288,16 +4057,15 @@ def main():
                         
                         # Use term data if available
                         term_data = st.session_state.results.get('term_data', {})
-                        writer_guide = st.session_state.results.get('writer_guide', {})
-                        corpus = st.session_state.results.get('analysis_data', {}).get('corpus', {})
                         
-                        # Generate article or guidance with linting
-                        article_content, lint_results, article_success = generate_article_with_linter(
+                        # Generate article or guidance using Claude
+                        article_content, article_success = generate_article(
                             st.session_state.results['keyword'],
                             st.session_state.results['semantic_structure'],
-                            writer_guide,
+                            st.session_state.results.get('related_keywords', []),
+                            st.session_state.results.get('serp_features', []),
+                            st.session_state.results.get('paa_questions', []),
                             term_data,
-                            corpus,
                             anthropic_api_key,
                             guidance_only
                         )
@@ -2308,7 +4076,6 @@ def main():
                                 st.session_state.results['guidance_content'] = article_content
                             else:
                                 st.session_state.results['article_content'] = article_content
-                                st.session_state.results['lint_results'] = lint_results
                             
                             # Store the guidance flag
                             st.session_state.results['guidance_only'] = guidance_only
@@ -2357,70 +4124,6 @@ def main():
                                 except Exception as e:
                                     logger.error(f"Error scoring content: {e}")
                             
-                            # Display lint results if available
-                            if not guidance_only and lint_results:
-                                with st.expander("Content Quality Analysis", expanded=True):
-                                    # Readability
-                                    readability = lint_results.get('readability', {})
-                                    st.markdown("### Readability")
-                                    read_score = readability.get('score', 0)
-                                    grade_level = readability.get('grade_level', '')
-                                    
-                                    score_color = "green" if read_score >= 60 else "red" if read_score < 30 else "orange"
-                                    st.markdown(f"**Score:** <span style='color:{score_color};'>{read_score:.1f}</span> (Grade Level: {grade_level})", unsafe_allow_html=True)
-                                    
-                                    # Display readability issues
-                                    read_issues = readability.get('issues', [])
-                                    if read_issues:
-                                        st.markdown("**Issues:**")
-                                        for issue in read_issues:
-                                            st.markdown(f"- {issue}")
-                                    
-                                    # Keyword density
-                                    kw_density = lint_results.get('keyword_density', {})
-                                    st.markdown("### Keyword Usage")
-                                    
-                                    # Primary keyword
-                                    primary_kw = kw_density.get('primary_keyword', {})
-                                    primary_status = primary_kw.get('status', 'unknown')
-                                    status_color = "green" if primary_status == 'good' else "red" if primary_status == 'missing' else "orange"
-                                    
-                                    st.markdown(f"""
-                                    **Primary Keyword:** {primary_kw.get('term', st.session_state.results['keyword'])}
-                                    - **Count:** {primary_kw.get('count', 0)}
-                                    - **Density:** {primary_kw.get('density', 0):.2f}%
-                                    - **Status:** <span style='color:{status_color};'>{primary_status}</span>
-                                    """, unsafe_allow_html=True)
-                                    
-                                    # Display keyword density issues
-                                    kw_issues = kw_density.get('issues', [])
-                                    if kw_issues:
-                                        st.markdown("**Issues:**")
-                                        for issue in kw_issues:
-                                            st.markdown(f"- {issue}")
-                                    
-                                    # Sentence variety
-                                    sent_variety = lint_results.get('sentence_variety', {})
-                                    st.markdown("### Sentence Variety")
-                                    variety_score = sent_variety.get('score', 0)
-                                    score_color = "green" if variety_score >= 80 else "red" if variety_score < 50 else "orange"
-                                    
-                                    st.markdown(f"**Variety Score:** <span style='color:{score_color};'>{variety_score:.1f}%</span>", unsafe_allow_html=True)
-                                    
-                                    # Display sentence variety issues
-                                    sent_issues = sent_variety.get('issues', [])
-                                    if sent_issues:
-                                        st.markdown("**Issues:**")
-                                        for issue in sent_issues:
-                                            st.markdown(f"- {issue}")
-                                    
-                                    # Display repeating patterns
-                                    repeat_patterns = sent_variety.get('repeat_patterns', [])
-                                    if repeat_patterns:
-                                        st.markdown("#### Repeating Sentence Patterns")
-                                        patterns_df = pd.DataFrame(repeat_patterns, columns=['Pattern', 'Count'])
-                                        st.dataframe(patterns_df)
-                            
                             st.subheader("Generated " + ("Content Guidance" if guidance_only else "Article"))
                             st.markdown(article_content, unsafe_allow_html=True)
                             
@@ -2449,44 +4152,6 @@ def main():
                         <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
                     </div>
                     """, unsafe_allow_html=True)
-                
-                # Display lint results if available
-                if 'lint_results' in st.session_state.results:
-                    with st.expander("Content Quality Analysis"):
-                        lint_results = st.session_state.results['lint_results']
-                        
-                        # Readability
-                        readability = lint_results.get('readability', {})
-                        st.markdown("### Readability")
-                        read_score = readability.get('score', 0)
-                        grade_level = readability.get('grade_level', '')
-                        
-                        score_color = "green" if read_score >= 60 else "red" if read_score < 30 else "orange"
-                        st.markdown(f"**Score:** <span style='color:{score_color};'>{read_score:.1f}</span> (Grade Level: {grade_level})", unsafe_allow_html=True)
-                        
-                        # Keyword density
-                        kw_density = lint_results.get('keyword_density', {})
-                        st.markdown("### Keyword Usage")
-                        
-                        # Primary keyword
-                        primary_kw = kw_density.get('primary_keyword', {})
-                        primary_status = primary_kw.get('status', 'unknown')
-                        status_color = "green" if primary_status == 'good' else "red" if primary_status == 'missing' else "orange"
-                        
-                        st.markdown(f"""
-                        **Primary Keyword:** {primary_kw.get('term', st.session_state.results['keyword'])}
-                        - **Count:** {primary_kw.get('count', 0)}
-                        - **Density:** {primary_kw.get('density', 0):.2f}%
-                        - **Status:** <span style='color:{status_color};'>{primary_status}</span>
-                        """, unsafe_allow_html=True)
-                        
-                        # Sentence variety
-                        sent_variety = lint_results.get('sentence_variety', {})
-                        st.markdown("### Sentence Variety")
-                        variety_score = sent_variety.get('score', 0)
-                        score_color = "green" if variety_score >= 80 else "red" if variety_score < 50 else "orange"
-                        
-                        st.markdown(f"**Variety Score:** <span style='color:{score_color};'>{variety_score:.1f}%</span>", unsafe_allow_html=True)
                 
                 # Display appropriate content based on what's available
                 if 'guidance_only' in st.session_state.results and st.session_state.results['guidance_only']:
@@ -2644,14 +4309,11 @@ def main():
                         
                         internal_links = st.session_state.results.get('internal_links', None)
                         guidance_only = False
-                        # Get lint results if available
-                        lint_results = st.session_state.results.get('lint_results', None)
                     else:
                         # Use guidance content
                         article_content = st.session_state.results['guidance_content']
                         internal_links = None
                         guidance_only = True
-                        lint_results = None
                     
                     # Get meta title and description
                     meta_title = st.session_state.results.get('meta_title', 
@@ -2667,7 +4329,7 @@ def main():
                     term_data = st.session_state.results.get('term_data', None)
                     score_data = st.session_state.results.get('content_score', None)
                     
-                    # Create Word document with enhanced Claude content and lint results
+                    # Create Word document with enhanced Claude content
                     doc_stream, doc_success = create_word_document(
                         st.session_state.results['keyword'],
                         st.session_state.results['organic_results'],
@@ -2680,8 +4342,7 @@ def main():
                         term_data,
                         score_data,
                         internal_links,
-                        guidance_only,
-                        lint_results
+                        guidance_only
                     )
                     
                     if doc_success:
@@ -2713,7 +4374,6 @@ def main():
                 ("Semantic Structure", 'semantic_structure' in st.session_state.results),
                 ("Meta Title & Description", 'meta_title' in st.session_state.results),
                 ("Content Score", 'content_score' in st.session_state.results),
-                ("Readability Analysis", 'lint_results' in st.session_state.results),
                 ("Generated Content", 'article_content' in st.session_state.results or 'guidance_content' in st.session_state.results),
                 ("Internal Linking", 'article_with_links' in st.session_state.results)
             ]
@@ -2734,13 +4394,764 @@ def main():
     
     # Tab 6: Content Updates
     with tabs[5]:
-        # Rest of the Content Updates tab code (unchanged)
-        pass
-
+        st.header("Content Update Recommendations")
+        
+        if 'semantic_structure' not in st.session_state.results or 'scraped_contents' not in st.session_state.results:
+            st.warning("Please complete SERP and content analysis first (in the 'Input & SERP Analysis' and 'Content Analysis' tabs)")
+        else:
+            st.write("Upload your existing content document to get update recommendations based on competitor analysis:")
+            
+            # File uploader for document
+            content_file = st.file_uploader("Upload Content Document", type=['docx'])
+            
+            # Add radio button BEFORE the button click event
+            update_type = st.radio(
+                "Select update approach:",
+                ["Recommendations Only", "Generate Optimized Article"],
+                help="Choose whether to receive recommendations or get a completely optimized article"
+            )
+            
+            if st.button("Generate Content Updates"):
+                if not anthropic_api_key:
+                    st.error("Please enter Anthropic API key")
+                elif not content_file:
+                    st.error("Please upload a content document")
+                else:
+                    with st.spinner("Analyzing content and generating updates..."):
+                        start_time = time.time()
+                        
+                        # Parse uploaded document
+                        existing_content, parse_success = parse_word_document(content_file)
+                        
+                        if parse_success and existing_content:
+                            # Get term data and score data if available
+                            term_data = st.session_state.results.get('term_data', {})
+                            
+                            # Score the existing content if we have term data
+                            score_data = None
+                            if term_data:
+                                html_content = f"<p>{existing_content.get('full_text', '').replace('\n\n', '</p><p>')}</p>"
+                                score_data, score_success = score_content(
+                                    html_content,
+                                    term_data,
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if score_success:
+                                    st.session_state.results['existing_content_score'] = score_data
+                            
+                            # Enhanced content gap analysis with Claude
+                            content_gaps, gap_success = analyze_content_gaps(
+                                existing_content,
+                                st.session_state.results['scraped_contents'],
+                                st.session_state.results['semantic_structure'],
+                                term_data,
+                                score_data if score_data else {},
+                                anthropic_api_key,
+                                st.session_state.results['keyword'],
+                                st.session_state.results.get('paa_questions', [])
+                            )
+                            
+                            if gap_success and content_gaps:
+                                # Store results
+                                st.session_state.results['existing_content'] = existing_content
+                                st.session_state.results['content_gaps'] = content_gaps
+                                
+                                if update_type == "Recommendations Only":
+                                    # Create updated document with recommendations
+                                    updated_doc, doc_success = create_updated_document(
+                                        existing_content,
+                                        content_gaps,
+                                        st.session_state.results['keyword'],
+                                        score_data
+                                    )
+                                    
+                                    if doc_success:
+                                        st.session_state.results['updated_doc'] = updated_doc
+                                        
+                                        # Display content score if available
+                                        if score_data:
+                                            st.subheader("Content Score Assessment")
+                                            score = score_data.get('overall_score', 0)
+                                            grade = score_data.get('grade', 'F')
+                                            
+                                            # CSS to style the score display
+                                            score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                                            st.markdown(f"""
+                                            <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                                                <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                                                <p>Implementing recommendations should significantly improve this score.</p>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                        
+                                        # Display summary of recommendations
+                                        st.subheader("Content Update Recommendations")
+                                        
+                                        # Term usage issues (new section)
+                                        if content_gaps.get('term_usage_issues'):
+                                            st.markdown("### Term Usage Issues")
+                                            term_table = pd.DataFrame(content_gaps['term_usage_issues'])
+                                            st.dataframe(term_table)
+                                        
+                                        # Semantic relevancy issues
+                                        if content_gaps.get('semantic_relevancy_issues'):
+                                            st.markdown("### Semantic Relevancy Issues")
+                                            for issue in content_gaps['semantic_relevancy_issues']:
+                                                st.markdown(f"**{issue.get('section', '')}**")
+                                                st.markdown(f"*Issue:* {issue.get('issue', '')}")
+                                                st.markdown(f"*Recommendation:* **<span style='color:red'>{issue.get('recommendation', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Unanswered PAA questions
+                                        if content_gaps.get('unanswered_questions'):
+                                            st.markdown("### Unanswered 'People Also Asked' Questions")
+                                            for question in content_gaps['unanswered_questions']:
+                                                st.markdown(f"**Q: {question.get('question', '')}**")
+                                                st.markdown(f"*Section:* {question.get('insert_into_section', 'END')}")
+                                                st.markdown(f"*Suggested Answer:* **<span style='color:red'>{question.get('suggested_answer', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Missing headings
+                                        if content_gaps.get('missing_headings'):
+                                            st.markdown("### Missing Sections")
+                                            for heading in content_gaps['missing_headings']:
+                                                st.markdown(f"**{heading.get('heading', '')}**")
+                                                st.markdown(f"*Insert after:* {heading.get('insert_after', 'END')}")
+                                                st.markdown(f"*{heading.get('suggested_content', '')}*")
+                                        
+                                        # Revised headings
+                                        if content_gaps.get('revised_headings'):
+                                            st.markdown("### Heading Revisions")
+                                            for revision in content_gaps['revised_headings']:
+                                                st.markdown(f"~~{revision.get('original', '')}~~ → **<span style='color:red'>{revision.get('suggested', '')}</span>**", unsafe_allow_html=True)
+                                        
+                                        # Content gaps
+                                        if content_gaps.get('content_gaps'):
+                                            st.markdown("### Content Gaps")
+                                            for gap in content_gaps['content_gaps']:
+                                                st.markdown(f"**{gap.get('topic', '')}**: {gap.get('details', '')}")
+                                        
+                                        # Expansion areas
+                                        if content_gaps.get('expansion_areas'):
+                                            st.markdown("### Expansion Areas")
+                                            for area in content_gaps['expansion_areas']:
+                                                st.markdown(f"**{area.get('section', '')}**: {area.get('reason', '')}")
+                                        
+                                        # Download button
+                                        st.download_button(
+                                            label="Download Update Recommendations",
+                                            data=updated_doc,
+                                            file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        )
+                                        
+                                        st.success(f"Content update recommendations generated in {format_time(time.time() - start_time)}")
+                                    else:
+                                        st.error("Failed to create updated document")
+                                
+                                else:  # Generate Optimized Article
+                                    # Generate optimized article with Claude
+                                    optimized_content, change_summary, success = generate_optimized_article_with_tracking(
+                                        existing_content,
+                                        st.session_state.results['scraped_contents'],
+                                        st.session_state.results['semantic_structure'],
+                                        st.session_state.results.get('related_keywords', []),
+                                        st.session_state.results['keyword'],
+                                        st.session_state.results.get('paa_questions', []),
+                                        term_data,
+                                        anthropic_api_key
+                                    )
+                                    
+                                    if success and optimized_content:
+                                        # Store the optimized content
+                                        st.session_state.results['optimized_content'] = optimized_content
+                                        st.session_state.results['change_summary'] = change_summary
+                                        
+                                        # Score the optimized content
+                                        if term_data:
+                                            optimized_score_data, score_success = score_content(
+                                                optimized_content,
+                                                term_data,
+                                                st.session_state.results['keyword']
+                                            )
+                                            
+                                            if score_success:
+                                                st.session_state.results['optimized_content_score'] = optimized_score_data
+                                                
+                                                # Compare scores if we have both
+                                                if score_data:
+                                                    old_score = score_data.get('overall_score', 0)
+                                                    new_score = optimized_score_data.get('overall_score', 0)
+                                                    
+                                                    st.subheader("Content Score Improvement")
+                                                    
+                                                    # Score comparison with styling
+                                                    score_diff = new_score - old_score
+                                                    st.markdown(f"""
+                                                    <div style="background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                                                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                                            <div>
+                                                                <span style="font-size: 16px; font-weight: bold;">Original Score:</span>
+                                                                <span style="font-size: 18px; color: {'green' if old_score >= 70 else 'red' if old_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                                                    {old_score} ({score_data.get('grade', 'F')})
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                <span style="font-size: 16px; font-weight: bold;">New Score:</span>
+                                                                <span style="font-size: 18px; color: {'green' if new_score >= 70 else 'red' if new_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                                                    {new_score} ({optimized_score_data.get('grade', 'F')})
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        <div style="text-align: center; padding-top: 5px;">
+                                                            <span style="font-size: 16px;">Improvement:</span>
+                                                            <span style="font-size: 20px; color: {'green' if score_diff > 0 else 'red' if score_diff < 0 else 'gray'}; font-weight: bold; margin-left: 10px;">
+                                                                {'+' if score_diff > 0 else ''}{score_diff} points
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    """, unsafe_allow_html=True)
+                                        
+                                        # Display a simplified tabbed view
+                                        opt_tabs = st.tabs(["Optimized Article", "Optimization Summary"])
+                                        
+                                        with opt_tabs[0]:
+                                            st.markdown("## Optimized Article")
+                                            st.markdown(optimized_content, unsafe_allow_html=True)
+                                        
+                                        with opt_tabs[1]:
+                                            st.markdown("## Optimization Summary")
+                                            st.markdown(change_summary, unsafe_allow_html=True)
+                                        
+                                        # Create Word document from HTML with score data
+                                        doc_stream = create_word_document_from_html(
+                                            optimized_content, 
+                                            st.session_state.results['keyword'],
+                                            change_summary,
+                                            st.session_state.results.get('optimized_content_score')
+                                        )
+                                        
+                                        # Download button
+                                        st.download_button(
+                                            label="Download Optimized Article",
+                                            data=doc_stream,
+                                            file_name=f"optimized_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        )
+                                        
+                                        st.success(f"Optimized article generated in {format_time(time.time() - start_time)}")
+                                    else:
+                                        st.error("Failed to generate optimized article")
+                                        
+            # Show previously generated recommendations if available
+            if 'content_gaps' in st.session_state.results:
+                if 'optimized_content' in st.session_state.results:
+                    st.subheader("Previously Generated Optimized Article")
+                    
+                    # Display score improvement if available
+                    if 'existing_content_score' in st.session_state.results and 'optimized_content_score' in st.session_state.results:
+                        old_score = st.session_state.results['existing_content_score'].get('overall_score', 0)
+                        new_score = st.session_state.results['optimized_content_score'].get('overall_score', 0)
+                        
+                        score_diff = new_score - old_score
+                        st.markdown(f"""
+                        <div style="background-color: #f0f0f0; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <div>
+                                    <span style="font-size: 16px; font-weight: bold;">Original Score:</span>
+                                    <span style="font-size: 18px; color: {'green' if old_score >= 70 else 'red' if old_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                        {old_score} ({st.session_state.results['existing_content_score'].get('grade', 'F')})
+                                    </span>
+                                </div>
+                                <div>
+                                    <span style="font-size: 16px; font-weight: bold;">New Score:</span>
+                                    <span style="font-size: 18px; color: {'green' if new_score >= 70 else 'red' if new_score < 50 else 'orange'}; font-weight: bold; margin-left: 10px;">
+                                        {new_score} ({st.session_state.results['optimized_content_score'].get('grade', 'F')})
+                                    </span>
+                                </div>
+                            </div>
+                            <div style="text-align: center; padding-top: 5px;">
+                                <span style="font-size: 16px;">Improvement:</span>
+                                <span style="font-size: 20px; color: {'green' if score_diff > 0 else 'red' if score_diff < 0 else 'gray'}; font-weight: bold; margin-left: 10px;">
+                                    {'+' if score_diff > 0 else ''}{score_diff} points
+                                </span>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # If we have a previously generated change summary, show tabs
+                    if 'change_summary' in st.session_state.results:
+                        prev_tabs = st.tabs(["Optimized Article", "Change Summary"])
+                        
+                        with prev_tabs[0]:
+                            st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
+                            
+                        with prev_tabs[1]:
+                            st.markdown(st.session_state.results['change_summary'], unsafe_allow_html=True)
+                    else:
+                        # Just show the content without tabs if no change summary
+                        st.markdown(st.session_state.results['optimized_content'], unsafe_allow_html=True)
+                    
+                    # If we have a previously optimized article, offer download
+                    if 'keyword' in st.session_state.results:
+                        doc_stream = create_word_document_from_html(
+                            st.session_state.results['optimized_content'],
+                            st.session_state.results['keyword'],
+                            st.session_state.results.get('change_summary', ''),
+                            st.session_state.results.get('optimized_content_score')
+                        )
+                        
+                        st.download_button(
+                            label="Download Previous Optimized Article",
+                            data=doc_stream,
+                            file_name=f"optimized_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="download_previous_optimized"
+                        )
+                
+                elif 'updated_doc' in st.session_state.results:
+                    st.subheader("Previously Generated Update Recommendations")
+                    
+                    # Display content score if available
+                    if 'existing_content_score' in st.session_state.results:
+                        score_data = st.session_state.results['existing_content_score']
+                        score = score_data.get('overall_score', 0)
+                        grade = score_data.get('grade', 'F')
+                        
+                        score_color = "green" if score >= 70 else "red" if score < 50 else "orange"
+                        st.markdown(f"""
+                        <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                            <h3 style="margin:0;">Content Score: <span style="color:{score_color};">{score} ({grade})</span></h3>
+                            <p>Implementing recommendations should significantly improve this score.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Download button for previously generated document
+                    st.download_button(
+                        label="Download Previous Update Recommendations",
+                        data=st.session_state.results['updated_doc'],
+                        file_name=f"content_updates_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_previous_updates"
+                    )
+    
     # Tab 7: Content Scoring
     with tabs[6]:
-        # Rest of the Content Scoring tab code (unchanged)
-        pass
+        st.header("Content Scoring & Optimization")
+        
+        if 'scraped_contents' not in st.session_state.results or 'keyword' not in st.session_state.results:
+            st.warning("Please fetch SERP data and analyze content first (in the 'Input & SERP Analysis' and 'Content Analysis' tabs)")
+        else:
+            # Check if we've already extracted terms
+            if 'term_data' not in st.session_state.results:
+                if st.button("Extract Important Terms"):
+                    if not anthropic_api_key:
+                        st.error("Please enter Anthropic API key")
+                    else:
+                        with st.spinner("Extracting important terms and topics from top-ranking content..."):
+                            start_time = time.time()
+                            
+                            term_data, success = extract_important_terms(
+                                st.session_state.results['scraped_contents'], 
+                                anthropic_api_key
+                            )
+                            
+                            if success and term_data:
+                                st.session_state.results['term_data'] = term_data
+                                
+                                # Show extracted terms
+                                st.subheader("Top Primary Terms")
+                                primary_df = pd.DataFrame(term_data.get('primary_terms', []))
+                                if not primary_df.empty:
+                                    st.dataframe(primary_df)
+                                
+                                st.subheader("Top Secondary Terms")
+                                secondary_df = pd.DataFrame(term_data.get('secondary_terms', []))
+                                if not secondary_df.empty:
+                                    st.dataframe(secondary_df)
+                                
+                                st.success(f"Term extraction completed in {format_time(time.time() - start_time)}")
+                            else:
+                                st.error("Failed to extract terms")
+            
+            else:
+                # Display previously extracted terms in a collapsible section
+                with st.expander("View Extracted Terms & Topics", expanded=False):
+                    st.subheader("Primary Terms")
+                    primary_df = pd.DataFrame(st.session_state.results['term_data'].get('primary_terms', []))
+                    if not primary_df.empty:
+                        st.dataframe(primary_df)
+                    
+                    st.subheader("Secondary Terms")
+                    secondary_df = pd.DataFrame(st.session_state.results['term_data'].get('secondary_terms', []))
+                    if not secondary_df.empty:
+                        st.dataframe(secondary_df)
+                    
+                    # Display topics if available
+                    if 'topics' in st.session_state.results['term_data']:
+                        st.subheader("Topics to Cover")
+                        topics_df = pd.DataFrame(st.session_state.results['term_data'].get('topics', []))
+                        if not topics_df.empty:
+                            st.dataframe(topics_df)
+                    
+                    # Display questions if available
+                    if 'questions' in st.session_state.results['term_data']:
+                        st.subheader("Questions to Answer")
+                        questions = st.session_state.results['term_data'].get('questions', [])
+                        for q in questions:
+                            st.write(f"- {q}")
+                
+                # Content input/editing area
+                st.subheader("Enter or Paste Your Content")
+                
+                # Initialize content in session state if needed
+                if 'current_content' not in st.session_state:
+                    # Use previously generated content if available
+                    if 'article_content' in st.session_state.results:
+                        # Strip HTML tags for the textarea
+                        soup = BeautifulSoup(st.session_state.results['article_content'], 'html.parser')
+                        plain_text = soup.get_text()
+                        st.session_state.current_content = plain_text
+                    else:
+                        st.session_state.current_content = ""
+                
+                # Function to update content in session state
+                def update_content():
+                    st.session_state.current_content = st.session_state.content_input
+                    # Clear previous scoring results when content changes
+                    if 'content_score' in st.session_state.results:
+                        del st.session_state.results['content_score']
+                    if 'highlighted_content' in st.session_state.results:
+                        del st.session_state.results['highlighted_content']
+                    if 'content_suggestions' in st.session_state.results:
+                        del st.session_state.results['content_suggestions']
+                
+                content_input = st.text_area(
+                    "Your content",
+                    value=st.session_state.current_content,
+                    height=400,
+                    key="content_input",
+                    on_change=update_content
+                )
+                
+                if st.button("Score Content"):
+                    if not st.session_state.current_content:
+                        st.error("Please enter content to score")
+                    else:
+                        with st.spinner("Scoring content..."):
+                            start_time = time.time()
+                            
+                            # Convert plain text to HTML for proper analysis
+                            content_html = f"<p>{st.session_state.current_content.replace('</p><p>', '</p>\n<p>').replace('\n\n', '</p>\n<p>').replace('\n', '<br>')}</p>"
+                            
+                            # Score the content
+                            score_data, score_success = score_content(
+                                content_html, 
+                                st.session_state.results['term_data'],
+                                st.session_state.results['keyword']
+                            )
+                            
+                            if score_success:
+                                st.session_state.results['content_score'] = score_data
+                                
+                                # Highlight keywords in content
+                                highlighted_content, highlight_success = highlight_keywords_in_content(
+                                    content_html,
+                                    st.session_state.results['term_data'],
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if highlight_success:
+                                    st.session_state.results['highlighted_content'] = highlighted_content
+                                
+                                # Get content improvement suggestions
+                                suggestions, suggestions_success = get_content_improvement_suggestions(
+                                    content_html,
+                                    st.session_state.results['term_data'],
+                                    score_data,
+                                    st.session_state.results['keyword']
+                                )
+                                
+                                if suggestions_success:
+                                    st.session_state.results['content_suggestions'] = suggestions
+                                    st.success(f"Content scoring completed in {format_time(time.time() - start_time)}")
+                                else:
+                                    st.error("Failed to score content")
+                
+                # Display content score if available
+                if 'content_score' in st.session_state.results:
+                    score_data = st.session_state.results['content_score']
+                    
+                    # Create score display with CSS styling
+                    col1, col2, col3 = st.columns([1, 1, 2])
+                    
+                    with col1:
+                        overall_score = score_data.get('overall_score', 0)
+                        st.markdown(f"""
+                        <div style="text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;">
+                            <h2 style="margin:0; font-size: 18px;">Overall Score</h2>
+                            <h1 style="margin:0; font-size: 48px; color: {'#28a745' if overall_score >= 70 else '#dc3545' if overall_score < 50 else '#ffc107'};">
+                                {overall_score}
+                            </h1>
+                            <p style="margin:0; font-size: 24px; font-weight: bold;">{score_data.get('grade', 'F')}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col2:
+                        component_scores = score_data.get('components', {})
+                        
+                        st.markdown(f"""
+                        <div style="padding: 10px; background-color: #f0f0f0; border-radius: 10px;">
+                            <h3 style="margin: 0 0 10px 0; font-size: 16px;">Component Scores</h3>
+                            <p style="margin: 0; font-size: 14px;">Primary Keyword: <strong>{component_scores.get('keyword_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Primary Terms: <strong>{component_scores.get('primary_terms_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Secondary Terms: <strong>{component_scores.get('secondary_terms_score', 0)}</strong></p>
+                            <p style="margin: 0; font-size: 14px;">Topic Coverage: <strong>{component_scores.get('topic_coverage_score', 0)}</strong></p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Create score visualization using Altair or Matplotlib
+                    with col3:
+                        # Create score components data
+                        component_data = pd.DataFrame({
+                            'Component': [
+                                'Keyword Usage',
+                                'Primary Terms',
+                                'Secondary Terms',
+                                'Topic Coverage',
+                                'Questions'
+                            ],
+                            'Score': [
+                                component_scores.get('keyword_score', 0),
+                                component_scores.get('primary_terms_score', 0),
+                                component_scores.get('secondary_terms_score', 0),
+                                component_scores.get('topic_coverage_score', 0),
+                                component_scores.get('question_coverage_score', 0)
+                            ]
+                        })
+                        
+                        # Add a color category column to the dataframe
+                        component_data['Color Category'] = pd.cut(
+                            component_data['Score'],
+                            bins=[0, 49.99, 69.99, 100],
+                            labels=['Poor', 'Medium', 'Good']
+                        )
+                        
+                        # Create a bar chart with color based on the category
+                        chart = alt.Chart(component_data).mark_bar().encode(
+                            x='Score',
+                            y=alt.Y('Component', sort=None),
+                            color=alt.Color(
+                                'Color Category:N',
+                                scale=alt.Scale(
+                                    domain=['Poor', 'Medium', 'Good'],
+                                    range=['#dc3545', '#ffc107', '#28a745']
+                                )
+                            ),
+                            tooltip=['Component', 'Score']
+                        ).properties(
+                            title='Score Components',
+                            width=300,
+                            height=200
+                        )
+                        
+                        # Display the chart
+                        st.altair_chart(chart, use_container_width=True)
+                    
+                    # Display content details
+                    details = score_data.get('details', {})
+                    st.markdown(f"""
+                    <div style="margin: 20px 0; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
+                        <h3 style="margin-top: 0;">Content Details</h3>
+                        <p>Word Count: <strong>{details.get('word_count', 0)}</strong></p>
+                        <p>Primary Keyword Count: <strong>{details.get('keyword_count', 0)}/{details.get('optimal_keyword_count', 0)} (optimal)</strong></p>
+                        <p>Primary Terms Found: <strong>{details.get('primary_terms_found', 0)}/{details.get('primary_terms_total', 0)}</strong></p>
+                        <p>Secondary Terms Found: <strong>{details.get('secondary_terms_found', 0)}/{details.get('secondary_terms_total', 0)}</strong></p>
+                        <p>Topics Covered: <strong>{details.get('topics_covered', 0)}/{details.get('topics_total', 0)}</strong></p>
+                        <p>Questions Answered: <strong>{details.get('questions_answered', 0)}/{details.get('questions_total', 0)}</strong></p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Display content with highlighted keywords
+                    if 'highlighted_content' in st.session_state.results:
+                        st.subheader("Content with Highlighted Keywords")
+                        st.markdown("""
+                        <div style="margin-bottom: 10px; font-size: 12px;">
+                            <span style="background-color: #FFEB9C; padding: 2px 5px;">Primary Keyword</span>
+                            <span style="background-color: #CDFFD8; padding: 2px 5px; margin-left: 10px;">Primary Terms</span>
+                            <span style="background-color: #E6F3FF; padding: 2px 5px; margin-left: 10px;">Secondary Terms</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div style="padding: 15px; border: 1px solid #ddd; border-radius: 5px; max-height: 400px; overflow-y: auto;">
+                            {st.session_state.results['highlighted_content']}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Display content improvement suggestions
+                    if 'content_suggestions' in st.session_state.results:
+                        suggestions = st.session_state.results['content_suggestions']
+                        
+                        st.subheader("Content Improvement Suggestions")
+                        
+                        # Tabs for different suggestion types
+                        suggestion_tabs = st.tabs([
+                            "Missing Terms", 
+                            "Content Gaps", 
+                            "Questions to Answer", 
+                            "Readability"
+                        ])
+                        
+                        # Missing Terms tab
+                        with suggestion_tabs[0]:
+                            st.markdown("### Missing and Underused Terms")
+                            
+                            # Missing primary terms
+                            missing_primary = [s for s in suggestions.get('missing_terms', []) if s.get('type') == 'primary']
+                            if missing_primary:
+                                st.markdown("#### Missing Primary Terms")
+                                for term in missing_primary:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #ffeeee; border-left: 3px solid #ff6666; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f} - Recommended usage: {term.get('recommended_usage', 1)}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.success("No important primary terms are missing!")
+                            
+                            # Underused terms
+                            underused_terms = suggestions.get('underused_terms', [])
+                            if underused_terms:
+                                st.markdown("#### Underused Terms")
+                                for term in underused_terms:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Current usage: {term.get('current_usage')}/{term.get('recommended_usage')} recommended
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Missing secondary terms
+                            missing_secondary = [s for s in suggestions.get('missing_terms', []) if s.get('type') == 'secondary']
+                            if missing_secondary:
+                                st.markdown("#### Missing Secondary Terms")
+                                for term in missing_secondary:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f0f0f0; border-left: 3px solid #808080; border-radius: 3px;">
+                                        <strong>{term.get('term')}</strong> - Importance: {term.get('importance', 0):.2f}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        
+                        # Content Gaps tab
+                        with suggestion_tabs[1]:
+                            st.markdown("### Content Topic Gaps")
+                            
+                            # Missing topics (completely missing)
+                            missing_topics = suggestions.get('missing_topics', [])
+                            if missing_topics:
+                                st.markdown("#### Topics to Add")
+                                for topic in missing_topics:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e3f2fd; border-left: 3px solid #2196f3; border-radius: 3px;">
+                                        <strong>Missing Topic: {topic.get('topic')}</strong>
+                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Partially covered topics (need enhancement)
+                            partial_topics = suggestions.get('partial_topics', [])
+                            if partial_topics:
+                                st.markdown("#### Topics to Expand")
+                                for topic in partial_topics:
+                                    match_ratio = topic.get('match_ratio', 0)
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #fff8e1; border-left: 3px solid #ffc107; border-radius: 3px;">
+                                        <strong>Enhance Coverage: {topic.get('topic')}</strong> ({int(match_ratio * 100)}% covered)
+                                        <p style="margin: 5px 0 0 0;">{topic.get('description', '')}</p>
+                                        <p style="margin: 5px 0 0 0; font-style: italic;">{topic.get('suggestion', '')}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            if not missing_topics and not partial_topics:
+                                st.success("Your content covers all the important topics comprehensively!")
+                        
+                        # Questions tab
+                        with suggestion_tabs[2]:
+                            st.markdown("### Questions to Answer")
+                            
+                            # Unanswered questions
+                            unanswered = suggestions.get('unanswered_questions', [])
+                            if unanswered:
+                                for i, question in enumerate(unanswered, 1):
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 10px; padding: 10px; background-color: #e8f5e9; border-left: 3px solid #4caf50; border-radius: 3px;">
+                                        <strong>{i}. {question}</strong>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            else:
+                                st.success("Your content answers all the important questions!")
+                        
+                        # Readability tab
+                        with suggestion_tabs[3]:
+                            st.markdown("### Readability & Structure Suggestions")
+                            
+                            # Readability suggestions
+                            readability = suggestions.get('readability_suggestions', [])
+                            if readability:
+                                for suggestion in readability:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #f3e5f5; border-left: 3px solid #9c27b0; border-radius: 3px;">
+                                        {suggestion}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            # Structure suggestions
+                            structure = suggestions.get('structure_suggestions', [])
+                            if structure:
+                                for suggestion in structure:
+                                    st.markdown(f"""
+                                    <div style="margin-bottom: 5px; padding: 5px 10px; background-color: #fce4ec; border-left: 3px solid #e91e63; border-radius: 3px;">
+                                        {suggestion}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                            
+                            if not readability and not structure:
+                                st.success("Your content has good readability and structure!")
+                    
+                    # Add download buttons for reports
+                    st.subheader("Download Reports")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Create and offer content brief for download
+                        brief_doc = create_content_scoring_brief(
+                            st.session_state.results['keyword'],
+                            st.session_state.results['term_data'],
+                            score_data,
+                            st.session_state.results.get('content_suggestions', {})
+                        )
+                        
+                        st.download_button(
+                            label="Download Content Optimization Brief",
+                            data=brief_doc,
+                            file_name=f"content_optimization_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    
+                    with col2:
+                        # Create and offer highlighted content document for download
+                        if 'highlighted_content' in st.session_state.results:
+                            highlighted_doc = create_word_document_from_html(
+                                st.session_state.results['highlighted_content'],
+                                st.session_state.results['keyword'] + " - Highlighted Terms",
+                                ""
+                            )
+                            
+                            st.download_button(
+                                label="Download Highlighted Content",
+                                data=highlighted_doc,
+                                file_name=f"highlighted_{st.session_state.results['keyword'].replace(' ', '_')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                            )
 
 if __name__ == "__main__":
     main()
